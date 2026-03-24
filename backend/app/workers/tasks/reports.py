@@ -1,0 +1,491 @@
+"""
+Celery tasks: Report generation.
+
+  generate_csv_report(org_id, date_from, date_to)
+    – Queries attendance records for the org in the date range.
+    – Writes a CSV file to an in-memory buffer.
+    – Uploads to MinIO.
+    – Returns a presigned download URL (valid 24 h).
+
+  generate_pdf_report(org_id, date_from, date_to)
+    – Builds a styled PDF using ReportLab.
+    – Same upload / URL flow as the CSV task.
+
+Both tasks are routed to the "reports" queue so they don't starve
+lightweight tasks.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+import logging
+import uuid
+from datetime import date, datetime, timezone
+from typing import Any
+
+from celery import shared_task
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Synchronous SQLAlchemy engine
+# ---------------------------------------------------------------------------
+
+_sync_engine = create_engine(
+    settings.sync_database_url,
+    pool_pre_ping=True,
+    pool_size=3,
+    max_overflow=5,
+    pool_recycle=1800,
+)
+SyncSession: sessionmaker[Session] = sessionmaker(
+    bind=_sync_engine, autoflush=False, autocommit=False, expire_on_commit=False
+)
+
+# ---------------------------------------------------------------------------
+# MinIO helper
+# ---------------------------------------------------------------------------
+
+
+def _get_minio_client():
+    """Return an initialised MinIO client."""
+    from minio import Minio  # noqa: PLC0415
+
+    client = Minio(
+        endpoint=settings.MINIO_ENDPOINT,
+        access_key=settings.MINIO_ACCESS_KEY,
+        secret_key=settings.MINIO_SECRET_KEY,
+        secure=settings.MINIO_SECURE,
+    )
+    # Ensure bucket exists
+    if not client.bucket_exists(settings.MINIO_BUCKET):
+        client.make_bucket(settings.MINIO_BUCKET)
+    return client
+
+
+def _upload_bytes(object_name: str, data: bytes, content_type: str) -> str:
+    """Upload raw bytes to MinIO and return a presigned GET URL (24 h)."""
+    from datetime import timedelta  # noqa: PLC0415
+
+    client = _get_minio_client()
+    buffer = io.BytesIO(data)
+    client.put_object(
+        bucket_name=settings.MINIO_BUCKET,
+        object_name=object_name,
+        data=buffer,
+        length=len(data),
+        content_type=content_type,
+    )
+    url = client.presigned_get_object(
+        bucket_name=settings.MINIO_BUCKET,
+        object_name=object_name,
+        expires=timedelta(hours=24),
+    )
+    return url
+
+
+# ---------------------------------------------------------------------------
+# Query helper
+# ---------------------------------------------------------------------------
+
+
+def _fetch_attendance_rows(
+    session: Session, org_id: str, date_from: str, date_to: str
+) -> list[dict[str, Any]]:
+    """
+    Return attendance records as plain dicts.
+
+    We use a raw SQL query so this task has no hard import dependency on
+    the ORM models (which may not be importable if the models package is
+    not fully initialised in the worker process).
+    """
+    sql = text(
+        """
+        SELECT
+            u.id           AS user_id,
+            u.full_name    AS employee_name,
+            u.email        AS employee_email,
+            d.name         AS department,
+            a.check_in_time,
+            a.check_out_time,
+            a.status,
+            a.latitude     AS check_in_lat,
+            a.longitude    AS check_in_lng,
+            a.work_hours
+        FROM attendance_records a
+        JOIN users           u  ON u.id  = a.user_id
+        LEFT JOIN departments d  ON d.id  = u.department_id
+        WHERE u.org_id     = :org_id
+          AND a.check_in_time >= :date_from
+          AND a.check_in_time <  :date_to + INTERVAL '1 day'
+        ORDER BY a.check_in_time, u.full_name
+        """
+    )
+    result = session.execute(
+        sql,
+        {
+            "org_id": org_id,
+            "date_from": date_from,
+            "date_to": date_to,
+        },
+    )
+    columns = list(result.keys())
+    return [dict(zip(columns, row)) for row in result.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# CSV task
+# ---------------------------------------------------------------------------
+
+
+@shared_task(
+    name="app.workers.tasks.reports.generate_csv_report",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    acks_late=True,
+)
+def generate_csv_report(
+    self,
+    org_id: str,
+    date_from: str,
+    date_to: str,
+) -> dict[str, str]:
+    """
+    Generate a CSV attendance report and upload to MinIO.
+
+    Args:
+        org_id:    UUID string of the organisation.
+        date_from: ISO date string "YYYY-MM-DD" (inclusive).
+        date_to:   ISO date string "YYYY-MM-DD" (inclusive).
+
+    Returns:
+        {"url": "<presigned download URL>", "object_name": "<MinIO key>"}
+    """
+    logger.info(
+        "Generating CSV report for org=%s %s → %s", org_id, date_from, date_to
+    )
+
+    try:
+        with SyncSession() as session:
+            rows = _fetch_attendance_rows(session, org_id, date_from, date_to)
+
+        if not rows:
+            logger.warning("No attendance records found for org=%s", org_id)
+            rows = []
+
+        # Build CSV in memory
+        output = io.StringIO()
+        fieldnames = [
+            "user_id",
+            "employee_name",
+            "employee_email",
+            "department",
+            "check_in_time",
+            "check_out_time",
+            "status",
+            "check_in_lat",
+            "check_in_lng",
+            "work_hours",
+        ]
+        writer = csv.DictWriter(
+            output, fieldnames=fieldnames, extrasaction="ignore", lineterminator="\r\n"
+        )
+        writer.writeheader()
+        for row in rows:
+            # Coerce non-serialisable types
+            for k, v in row.items():
+                if isinstance(v, datetime):
+                    row[k] = v.isoformat()
+                elif v is None:
+                    row[k] = ""
+            writer.writerow(row)
+
+        csv_bytes = output.getvalue().encode("utf-8-sig")  # BOM for Excel compat
+
+        # Build a unique object name
+        timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S")
+        object_name = f"reports/{org_id}/attendance_{date_from}_{date_to}_{timestamp}.csv"
+
+        url = _upload_bytes(object_name, csv_bytes, "text/csv")
+        logger.info("CSV report uploaded: %s (%d rows)", object_name, len(rows))
+        return {"url": url, "object_name": object_name, "row_count": len(rows)}
+
+    except Exception as exc:
+        logger.exception("CSV report generation failed: %s", exc)
+        raise self.retry(exc=exc)
+
+
+# ---------------------------------------------------------------------------
+# PDF task
+# ---------------------------------------------------------------------------
+
+
+@shared_task(
+    name="app.workers.tasks.reports.generate_pdf_report",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    acks_late=True,
+)
+def generate_pdf_report(
+    self,
+    org_id: str,
+    date_from: str,
+    date_to: str,
+) -> dict[str, str]:
+    """
+    Generate a PDF attendance report using ReportLab and upload to MinIO.
+
+    Falls back gracefully to a plain-text PDF if ReportLab is not installed.
+
+    Args:
+        org_id:    UUID string of the organisation.
+        date_from: ISO date string "YYYY-MM-DD" (inclusive).
+        date_to:   ISO date string "YYYY-MM-DD" (inclusive).
+
+    Returns:
+        {"url": "<presigned download URL>", "object_name": "<MinIO key>"}
+    """
+    logger.info(
+        "Generating PDF report for org=%s %s → %s", org_id, date_from, date_to
+    )
+
+    try:
+        with SyncSession() as session:
+            rows = _fetch_attendance_rows(session, org_id, date_from, date_to)
+
+        pdf_bytes = _build_pdf(org_id, date_from, date_to, rows)
+
+        timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S")
+        object_name = (
+            f"reports/{org_id}/attendance_{date_from}_{date_to}_{timestamp}.pdf"
+        )
+
+        url = _upload_bytes(object_name, pdf_bytes, "application/pdf")
+        logger.info("PDF report uploaded: %s (%d rows)", object_name, len(rows))
+        return {"url": url, "object_name": object_name, "row_count": len(rows)}
+
+    except Exception as exc:
+        logger.exception("PDF report generation failed: %s", exc)
+        raise self.retry(exc=exc)
+
+
+# ---------------------------------------------------------------------------
+# PDF builder (ReportLab)
+# ---------------------------------------------------------------------------
+
+
+def _build_pdf(
+    org_id: str,
+    date_from: str,
+    date_to: str,
+    rows: list[dict[str, Any]],
+) -> bytes:
+    """
+    Build a styled PDF with a title, metadata header, and data table.
+
+    Uses ReportLab's Platypus (flowables + table).
+    If ReportLab is unavailable, falls back to a minimal hand-crafted PDF.
+    """
+    try:
+        from reportlab.lib import colors  # noqa: PLC0415
+        from reportlab.lib.pagesizes import A4, landscape  # noqa: PLC0415
+        from reportlab.lib.styles import getSampleStyleSheet  # noqa: PLC0415
+        from reportlab.lib.units import cm  # noqa: PLC0415
+        from reportlab.platypus import (  # noqa: PLC0415
+            Paragraph,
+            SimpleDocTemplate,
+            Spacer,
+            Table,
+            TableStyle,
+        )
+
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=landscape(A4),
+            leftMargin=1.5 * cm,
+            rightMargin=1.5 * cm,
+            topMargin=2 * cm,
+            bottomMargin=2 * cm,
+        )
+        styles = getSampleStyleSheet()
+        story = []
+
+        # ── Title ──────────────────────────────────────────────────────────
+        title = Paragraph(
+            f"<b>Attendance Report</b>",
+            styles["Title"],
+        )
+        subtitle = Paragraph(
+            f"Organisation: {org_id} &nbsp;|&nbsp; Period: {date_from} – {date_to}",
+            styles["Normal"],
+        )
+        generated = Paragraph(
+            f"Generated: {datetime.now(tz=timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            styles["Normal"],
+        )
+        story.extend([title, subtitle, generated, Spacer(1, 0.5 * cm)])
+
+        # ── Table ──────────────────────────────────────────────────────────
+        col_headers = [
+            "Employee",
+            "Email",
+            "Department",
+            "Check-In",
+            "Check-Out",
+            "Status",
+            "Lat",
+            "Lng",
+            "Hours",
+        ]
+
+        def _fmt(v: Any) -> str:
+            if v is None:
+                return "—"
+            if isinstance(v, datetime):
+                return v.strftime("%Y-%m-%d %H:%M")
+            return str(v)
+
+        table_data = [col_headers]
+        for row in rows:
+            table_data.append(
+                [
+                    _fmt(row.get("employee_name")),
+                    _fmt(row.get("employee_email")),
+                    _fmt(row.get("department")),
+                    _fmt(row.get("check_in_time")),
+                    _fmt(row.get("check_out_time")),
+                    _fmt(row.get("status")),
+                    _fmt(row.get("check_in_lat")),
+                    _fmt(row.get("check_in_lng")),
+                    _fmt(row.get("work_hours")),
+                ]
+            )
+
+        col_widths = [4 * cm, 5 * cm, 3.5 * cm, 4 * cm, 4 * cm, 2.5 * cm, 2 * cm, 2 * cm, 2 * cm]
+        tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
+        tbl.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563EB")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 9),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("FONTSIZE", (0, 1), (-1, -1), 8),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F1F5F9")]),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ]
+            )
+        )
+        story.append(tbl)
+
+        if not rows:
+            story.append(Spacer(1, 1 * cm))
+            story.append(Paragraph("No attendance records found for this period.", styles["Normal"]))
+
+        doc.build(story)
+        return buffer.getvalue()
+
+    except ImportError:
+        logger.warning("ReportLab not installed – generating minimal plain-text PDF")
+        return _build_minimal_pdf(org_id, date_from, date_to, rows)
+
+
+def _build_minimal_pdf(
+    org_id: str,
+    date_from: str,
+    date_to: str,
+    rows: list[dict[str, Any]],
+) -> bytes:
+    """
+    Hand-craft a minimal valid PDF (no external dependencies).
+    Suitable as a fallback when ReportLab is unavailable.
+    """
+    lines = [
+        f"Attendance Report",
+        f"Organisation: {org_id}",
+        f"Period: {date_from} to {date_to}",
+        f"Generated: {datetime.now(tz=timezone.utc).isoformat()}",
+        "",
+        "Employee | Email | Department | Check-In | Check-Out | Status | Hours",
+        "-" * 80,
+    ]
+    for row in rows:
+        def _f(k: str) -> str:
+            v = row.get(k)
+            if v is None:
+                return ""
+            if isinstance(v, datetime):
+                return v.strftime("%Y-%m-%d %H:%M")
+            return str(v)
+
+        lines.append(
+            " | ".join(
+                [
+                    _f("employee_name"),
+                    _f("employee_email"),
+                    _f("department"),
+                    _f("check_in_time"),
+                    _f("check_out_time"),
+                    _f("status"),
+                    _f("work_hours"),
+                ]
+            )
+        )
+
+    body_text = "\n".join(lines)
+
+    # Minimal valid PDF structure
+    stream_content = f"BT /F1 10 Tf 40 750 Td ({body_text[:4000]}) Tj ET"
+    stream_bytes = stream_content.encode("latin-1", errors="replace")
+
+    objects: list[bytes] = []
+
+    def obj(n: int, content: str) -> bytes:
+        return f"{n} 0 obj\n{content}\nendobj\n".encode()
+
+    objects.append(obj(1, "<< /Type /Catalog /Pages 2 0 R >>"))
+    objects.append(obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"))
+    objects.append(
+        obj(
+            3,
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            "/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        )
+    )
+    stream_obj = (
+        f"4 0 obj\n<< /Length {len(stream_bytes)} >>\nstream\n".encode()
+        + stream_bytes
+        + b"\nendstream\nendobj\n"
+    )
+    objects.append(stream_obj)
+    objects.append(
+        obj(
+            5,
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+            "/Encoding /WinAnsiEncoding >>",
+        )
+    )
+
+    header = b"%PDF-1.4\n"
+    body = b"".join(objects)
+    xref_offset = len(header) + len(body)
+    xref = (
+        f"xref\n0 6\n0000000000 65535 f \n"
+        + "0000000000 00000 n \n" * 5
+        + f"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+    ).encode()
+
+    return header + body + xref

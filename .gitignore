@@ -1,0 +1,55 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Alembic
+backend/migrations/versions/*.py
+!backend/migrations/versions/.gitkeep
+
+# Node
+node_modules/
+.expo/
+.expo-shared/
+dist/
+web-build/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker volumes (local dev data — never commit)
+postgres_data/
+redis_data/
+minio_data/
+
+# Firebase credentials — NEVER commit
+backend/firebase-credentials.json
+
+# Generated reports
+*.csv
+*.pdf
+
+# Logs
+*.log
+logs/

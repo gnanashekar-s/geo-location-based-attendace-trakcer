@@ -1,0 +1,84 @@
+{
+  "expo": {
+    "name": "GeoAttendance",
+    "slug": "geo-attendance",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "geoattendance",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#4F46E5"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "updates": {
+      "enabled": false
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.geoattendance.mobile",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "GeoAttendance needs your location to verify attendance at your workplace.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "GeoAttendance needs background location access to track attendance accurately.",
+        "NSLocationAlwaysUsageDescription": "GeoAttendance needs background location access to track attendance accurately.",
+        "NSCameraUsageDescription": "GeoAttendance needs camera access to take a selfie for attendance verification.",
+        "NSPhotoLibraryUsageDescription": "GeoAttendance needs access to your photo library for profile pictures.",
+        "UIBackgroundModes": [
+          "location",
+          "fetch",
+          "remote-notification"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#4F46E5"
+      },
+      "package": "com.geoattendance.mobile",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "root": "app"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow GeoAttendance to use your location.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow GeoAttendance to access your camera for attendance verification."
+        }
+      ],
+      "expo-web-browser"
+    ]
+  }
+}

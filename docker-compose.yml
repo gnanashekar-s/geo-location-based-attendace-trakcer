@@ -1,0 +1,219 @@
+###############################################################################
+# Geo-Location Based Attendance System – Docker Compose
+#
+# Services
+# ────────
+#   db       – PostgreSQL 16 + PostGIS 3.4
+#   redis    – Redis 7 (append-only persistence)
+#   minio    – MinIO object storage
+#   api      – FastAPI application (uvicorn)
+#   worker   – Celery worker
+#   beat     – Celery beat scheduler
+#   nginx    – Nginx reverse proxy
+#   mailhog  – Local SMTP / mail UI for development
+#
+# Usage
+# ─────
+#   cp .env.example .env          # fill in secrets
+#   docker compose up -d --build
+###############################################################################
+
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL + PostGIS ────────────────────────────────────────────────
+  db:
+    image: postgis/postgis:16-3.4-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - backend
+
+  # ── Redis ───────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+        --appendonly yes
+        --appendfsync everysec
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - backend
+
+  # ── MinIO ───────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MINIO_ROOT_USER:     ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - backend
+
+  # ── FastAPI application ─────────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    command: >
+      sh -c "
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting API server...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level info
+      "
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    networks:
+      - backend
+    environment:
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: "1"
+
+  # ── Celery worker ────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    command: >
+      celery -A app.workers.celery_app.celery_app worker
+        --loglevel=info
+        --concurrency=2
+        --queues=default,reports,escalation,geofence
+        --hostname=worker@%h
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    environment:
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: "1"
+
+  # ── Celery beat ─────────────────────────────────────────────────────────
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    command: >
+      celery -A app.workers.celery_app.celery_app beat
+        --loglevel=info
+        --scheduler celery.beat:PersistentScheduler
+        --schedule /tmp/celerybeat-schedule
+    volumes:
+      - ./backend:/app
+      - celerybeat_schedule:/tmp
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    environment:
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: "1"
+
+  # ── Nginx ───────────────────────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    networks:
+      - backend
+
+  # ── MailHog (development SMTP) ───────────────────────────────────────────
+  mailhog:
+    image: mailhog/mailhog:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025"    # SMTP
+      - "8025:8025"    # Web UI
+    networks:
+      - backend
+
+###############################################################################
+# Volumes
+###############################################################################
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+  celerybeat_schedule:
+    driver: local
+
+###############################################################################
+# Networks
+###############################################################################
+
+networks:
+  backend:
+    driver: bridge
