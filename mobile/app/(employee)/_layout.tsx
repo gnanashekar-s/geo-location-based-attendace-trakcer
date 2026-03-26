@@ -1,35 +1,24 @@
 import React, { useEffect, useRef } from 'react';
 import { Tabs } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Platform, StyleSheet, View } from 'react-native';
-import { Text } from 'react-native-paper';
+import { View, Text, StyleSheet } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { notificationsApi } from '@/services/api';
 import { useNotificationStore } from '@/store/notificationStore';
 import type { NotificationItem } from '@/types';
+import { Colors } from '@/constants/theme';
+
+const C = Colors;
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
 
-interface TabIconProps {
-  name: IconName;
-  outlineName: IconName;
-  focused: boolean;
-  label: string;
-}
-
-function TabIcon({ name, outlineName, focused, label }: TabIconProps) {
+function TabIcon({ name, outlineName, focused, label }: {
+  name: IconName; outlineName: IconName; focused: boolean; label: string;
+}) {
   return (
-    <View style={[styles.tabItem, focused && styles.tabItemActive]}>
-      <MaterialCommunityIcons
-        name={focused ? name : outlineName}
-        size={26}
-        color={focused ? '#4F46E5' : '#94A3B8'}
-      />
-      <Text
-        style={[styles.tabLabel, focused && styles.tabLabelActive]}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
+    <View style={[styles.tabIcon, focused && styles.tabIconActive]}>
+      <MaterialCommunityIcons name={focused ? name : outlineName} size={22} color={focused ? C.primary : C.textMuted} />
+      <Text style={[styles.tabLabel, focused && styles.tabLabelActive]}>{label}</Text>
     </View>
   );
 }
@@ -43,25 +32,18 @@ export default function EmployeeTabLayout() {
       const res = await notificationsApi.list();
       const items = (res.data?.items ?? []) as NotificationItem[];
       setNotifications(items.map(n => ({
-        id: n.id,
-        title: n.title,
-        body: n.body,
+        id: n.id, title: n.title, body: n.body,
         category: (n.type ?? 'system') as any,
-        is_read: n.is_read,
-        data: (n.data as Record<string, unknown>) ?? {},
+        is_read: n.is_read, data: (n.data as any) ?? {},
         received_at: n.created_at,
       })));
-    } catch {
-      // Silently ignore — backend may not be reachable
-    }
+    } catch { /* silently ignore */ }
   };
 
   useEffect(() => {
     fetchNotifications();
     intervalRef.current = setInterval(fetchNotifications, 60_000);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, []);
 
   return (
@@ -70,120 +52,66 @@ export default function EmployeeTabLayout() {
         headerShown: false,
         tabBarShowLabel: false,
         tabBarStyle: styles.tabBar,
-        tabBarActiveTintColor: '#4F46E5',
-        tabBarInactiveTintColor: '#94A3B8',
+        tabBarActiveTintColor: C.primary,
+        tabBarInactiveTintColor: C.textMuted,
       }}
     >
-      <Tabs.Screen
-        name="index"
+      <Tabs.Screen name="index"
+        options={{ title: 'Home',
+          tabBarIcon: ({ focused }) => <TabIcon name="home" outlineName="home-outline" focused={focused} label="Home" /> }}
+      />
+      <Tabs.Screen name="checkin"
         options={{
-          title: 'Home',
           tabBarIcon: ({ focused }) => (
-            <TabIcon name="home" outlineName="home-outline" focused={focused} label="Home" />
+            <View style={styles.fabWrap}>
+              <LinearGradient colors={['#6366F1', '#8B5CF6']} style={styles.fab}>
+                <MaterialCommunityIcons name="map-marker-check" size={24} color="#fff" />
+              </LinearGradient>
+            </View>
           ),
+          tabBarLabel: () => null,
         }}
       />
-      <Tabs.Screen
-        name="checkin"
-        options={{
-          title: 'Check-In',
-          tabBarIcon: ({ focused }) => (
-            <TabIcon
-              name="map-marker-check"
-              outlineName="map-marker-check-outline"
-              focused={focused}
-              label="Check-In"
-            />
-          ),
-        }}
+      <Tabs.Screen name="history"
+        options={{ title: 'History',
+          tabBarIcon: ({ focused }) => <TabIcon name="calendar-month" outlineName="calendar-month-outline" focused={focused} label="History" /> }}
       />
-      <Tabs.Screen
-        name="history"
-        options={{
-          title: 'History',
-          tabBarIcon: ({ focused }) => (
-            <TabIcon
-              name="calendar-month"
-              outlineName="calendar-month-outline"
-              focused={focused}
-              label="History"
-            />
-          ),
-        }}
+      <Tabs.Screen name="streaks"
+        options={{ title: 'Streaks',
+          tabBarIcon: ({ focused }) => <TabIcon name="trophy" outlineName="trophy-outline" focused={focused} label="Streaks" /> }}
       />
-      <Tabs.Screen
-        name="streaks"
-        options={{
-          title: 'Streaks',
-          tabBarIcon: ({ focused }) => (
-            <TabIcon
-              name="trophy"
-              outlineName="trophy-outline"
-              focused={focused}
-              label="Streaks"
-            />
-          ),
-        }}
+      <Tabs.Screen name="profile"
+        options={{ title: 'Profile',
+          tabBarIcon: ({ focused }) => <TabIcon name="account-circle" outlineName="account-circle-outline" focused={focused} label="Profile" /> }}
       />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: 'Profile',
-          tabBarIcon: ({ focused }) => (
-            <TabIcon
-              name="account-circle"
-              outlineName="account-circle-outline"
-              focused={focused}
-              label="Profile"
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="manual-checkin"
-        options={{ href: null }}
-      />
-      <Tabs.Screen
-        name="privacy"
-        options={{ href: null }}
-      />
+      <Tabs.Screen name="manual-checkin" options={{ href: null }} />
+      <Tabs.Screen name="privacy" options={{ href: null }} />
+      <Tabs.Screen name="trust-score" options={{ href: null }} />
     </Tabs>
   );
 }
 
 const styles = StyleSheet.create({
   tabBar: {
-    height: Platform.OS === 'web' ? 64 : 70,
-    paddingTop: 4,
-    paddingBottom: Platform.OS === 'ios' ? 8 : 4,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: C.card,
+    borderTopColor: C.border,
     borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 12,
+    height: 64,
+    paddingBottom: 10,
+    paddingTop: 4,
   },
-  tabItem: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 2,
-    minWidth: 60,
+  tabIcon: {
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 10, gap: 3, minWidth: 52,
   },
-  tabItemActive: {
-    backgroundColor: '#EEF2FF',
-  },
-  tabLabel: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#94A3B8',
-  },
-  tabLabelActive: {
-    color: '#4F46E5',
-    fontWeight: '700',
+  tabIconActive: { backgroundColor: C.primaryBg },
+  tabLabel:      { fontSize: 10, color: C.textMuted, fontWeight: '500' },
+  tabLabelActive: { color: C.primary, fontWeight: '700' },
+  fabWrap: { alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  fab: {
+    width: 50, height: 50, borderRadius: 25,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#6366F1', shadowOpacity: 0.5, shadowRadius: 10, elevation: 8,
   },
 });

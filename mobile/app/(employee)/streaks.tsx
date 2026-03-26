@@ -1,39 +1,278 @@
 import React from 'react';
-import { View, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
-import { Text, Surface } from 'react-native-paper';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
+  StatusBar,
+} from 'react-native';
+import { Text } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useQuery } from '@tanstack/react-query';
 import { attendanceApi, usersApi } from '@/services/api';
 import type { AttendanceStats, LeaderboardEntry } from '@/types';
 
-const MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+// ─── Design tokens ────────────────────────────────────────────────────────────
 
-function FlameAnimation({ streakCount }: { streakCount: number }) {
-  const isLegendary = streakCount >= 30;
-  const bgColor = streakCount > 0
-    ? (isLegendary ? '#FFF7ED' : '#FFFBEB')
-    : '#F8FAFC';
+const C = {
+  bg: '#09090B', surface: '#18181B', surface2: '#27272A',
+  border: 'rgba(255,255,255,0.06)', borderStrong: 'rgba(255,255,255,0.12)',
+  primary: '#6366F1', primaryDark: '#4F46E5', accent: '#8B5CF6',
+  success: '#22C55E', successLight: 'rgba(34,197,94,0.10)',
+  warning: '#F59E0B', warningLight: 'rgba(245,158,11,0.10)',
+  danger: '#EF4444', dangerLight: 'rgba(239,68,68,0.10)',
+  purple: '#A855F7', purpleLight: 'rgba(168,85,247,0.10)',
+  teal: '#14B8A6', tealLight: 'rgba(20,184,166,0.10)',
+  textPrimary: '#FAFAFA', textSecondary: '#A1A1AA', textMuted: '#71717A',
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function getMotivation(streak: number): string {
+  if (streak === 0)  return 'Start your streak today!';
+  if (streak < 7)    return 'Keep going!';
+  if (streak < 30)   return 'One week strong!';
+  return 'Monthly champion!';
+}
+
+function getDayLetters(): string[] {
+  return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+}
+
+// ─── Build this-month calendar ────────────────────────────────────────────────
+// Returns an array of { date, status } for every cell in the 7-col calendar
+// starting from the Monday of the week containing the 1st of the current month.
+
+type DayStatus = 'present' | 'absent' | 'today' | 'empty';
+
+interface CalendarDay {
+  day: number | null;   // null = padding cell
+  status: DayStatus;
+}
+
+function buildCalendar(presentDays: Set<number>, absentDays: Set<number>): CalendarDay[] {
+  const now      = new Date();
+  const year     = now.getFullYear();
+  const month    = now.getMonth();
+  const today    = now.getDate();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // day-of-week of the 1st (0=Sun…6=Sat) → convert to Mon-based (0=Mon…6=Sun)
+  const firstDow = new Date(year, month, 1).getDay();
+  const startOffset = (firstDow + 6) % 7; // Monday-based offset
+
+  const cells: CalendarDay[] = [];
+
+  // Leading empty cells
+  for (let i = 0; i < startOffset; i++) {
+    cells.push({ day: null, status: 'empty' });
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    let status: DayStatus = 'empty';
+    if (d === today)         status = 'today';
+    else if (d > today)      status = 'empty';
+    else if (presentDays.has(d)) status = 'present';
+    else if (absentDays.has(d))  status = 'absent';
+    else                         status = 'empty';
+
+    cells.push({ day: d, status });
+  }
+
+  return cells;
+}
+
+// ─── Calendar component ───────────────────────────────────────────────────────
+
+function StreakCalendar({ presentDays, absentDays }: { presentDays: Set<number>; absentDays: Set<number> }) {
+  const cells = buildCalendar(presentDays, absentDays);
+  const headers = getDayLetters();
+
+  function dotStyle(status: DayStatus) {
+    switch (status) {
+      case 'present': return { backgroundColor: C.success,  width: 32, height: 32, borderRadius: 16 };
+      case 'absent':  return { backgroundColor: C.danger,   width: 26, height: 26, borderRadius: 13 };
+      case 'today':   return { backgroundColor: C.primary,  width: 32, height: 32, borderRadius: 16, borderWidth: 2, borderColor: '#FFFFFF' };
+      default:        return { backgroundColor: C.surface2, width: 32, height: 32, borderRadius: 16 };
+    }
+  }
+
+  function textStyle(status: DayStatus) {
+    if (status === 'empty') return { color: C.textMuted };
+    return { color: '#FFFFFF', fontWeight: '600' as const };
+  }
 
   return (
-    <View style={[styles.flameContainer, { backgroundColor: bgColor }]}>
-      <Text style={styles.flameEmoji}>{streakCount > 0 ? '🔥' : '💤'}</Text>
-      <Text style={[styles.streakNumber, { color: streakCount > 0 ? '#EA580C' : '#CBD5E1' }]}>
-        {streakCount}
-      </Text>
-      <Text style={styles.streakLabel}>day streak</Text>
-      {isLegendary && <Text style={styles.legendaryBadge}>🏆 Legendary!</Text>}
+    <View style={s.sectionCard}>
+      <Text style={s.sectionTitle}>This Month</Text>
+
+      {/* Day headers */}
+      <View style={s.calRow}>
+        {headers.map(h => (
+          <View key={h} style={s.calCell}>
+            <Text style={s.calHeader}>{h}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Calendar grid — chunk into rows of 7 */}
+      {Array.from({ length: Math.ceil(cells.length / 7) }).map((_, rowIdx) => {
+        const row = cells.slice(rowIdx * 7, rowIdx * 7 + 7);
+        // Pad last row to 7
+        while (row.length < 7) row.push({ day: null, status: 'empty' });
+        return (
+          <View key={rowIdx} style={s.calRow}>
+            {row.map((cell, colIdx) => (
+              <View key={colIdx} style={s.calCell}>
+                {cell.day !== null ? (
+                  <View style={[s.calDot, dotStyle(cell.status)]}>
+                    <Text style={[s.calDayNum, textStyle(cell.status)]}>
+                      {cell.day}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={[s.calDot, { backgroundColor: 'transparent' }]} />
+                )}
+              </View>
+            ))}
+          </View>
+        );
+      })}
+
+      {/* Legend */}
+      <View style={s.calLegend}>
+        {[
+          { color: C.success, label: 'Present' },
+          { color: C.danger,  label: 'Absent'  },
+          { color: C.primary, label: 'Today'   },
+        ].map(item => (
+          <View key={item.label} style={s.legendRow}>
+            <View style={[s.legendDot, { backgroundColor: item.color }]} />
+            <Text style={s.legendText}>{item.label}</Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
 
-function getMotivation(streak: number): string {
-  if (streak === 0) return 'Start your streak today! Check in on time to begin.';
-  if (streak < 5) return "Great start! Keep going — you're building momentum.";
-  if (streak < 15) return "Impressive consistency! You're in the zone. 🔥";
-  if (streak < 30) return "Amazing dedication! Almost legendary status!";
-  return "You're a punctuality legend! 🏆 Inspiring the whole team.";
+// ─── Milestone badges ─────────────────────────────────────────────────────────
+
+interface Milestone {
+  days: number;
+  label: string;
+  tier: 'bronze' | 'silver' | 'gold';
+  emoji: string;
+  gradient: [string, string];
+  lockedGradient: [string, string];
 }
+
+const MILESTONES: Milestone[] = [
+  {
+    days: 7,
+    label: '7-Day Streak',
+    tier: 'bronze',
+    emoji: '🥉',
+    gradient:       ['#92400E', '#D97706'],
+    lockedGradient: ['#1E293B', '#334155'],
+  },
+  {
+    days: 30,
+    label: '30-Day Streak',
+    tier: 'silver',
+    emoji: '🥈',
+    gradient:       ['#334155', '#64748B'],
+    lockedGradient: ['#1E293B', '#334155'],
+  },
+  {
+    days: 100,
+    label: '100-Day Streak',
+    tier: 'gold',
+    emoji: '🥇',
+    gradient:       ['#78350F', '#F59E0B'],
+    lockedGradient: ['#1E293B', '#334155'],
+  },
+];
+
+function MilestoneBadges({ streakCount }: { streakCount: number }) {
+  return (
+    <View style={s.sectionCardNoPad}>
+      <Text style={[s.sectionTitle, { paddingHorizontal: 16, paddingTop: 16 }]}>Milestones</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={s.badgesRow}
+      >
+        {MILESTONES.map(m => {
+          const unlocked = streakCount >= m.days;
+          const grad = unlocked ? m.gradient : m.lockedGradient;
+          return (
+            <LinearGradient
+              key={m.days}
+              colors={grad}
+              style={s.badgeCard}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              {unlocked ? (
+                <Text style={s.badgeEmoji}>{m.emoji}</Text>
+              ) : (
+                <View style={s.badgeLockWrap}>
+                  <MaterialCommunityIcons name="lock" size={22} color={C.textMuted} />
+                </View>
+              )}
+              <Text style={[s.badgeLabel, !unlocked && { color: C.textMuted }]}>
+                {m.label}
+              </Text>
+              <Text style={[s.badgeTier, !unlocked && { color: C.textMuted }]}>
+                {m.tier.charAt(0).toUpperCase() + m.tier.slice(1)}
+              </Text>
+            </LinearGradient>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
+// ─── Leaderboard ──────────────────────────────────────────────────────────────
+
+const MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+
+function Leaderboard({ data, isLoading }: { data?: LeaderboardEntry[]; isLoading: boolean }) {
+  return (
+    <View style={s.sectionCard}>
+      <Text style={s.sectionTitle}>Top Performers</Text>
+      {isLoading ? (
+        <View style={s.loadingBox}>
+          <ActivityIndicator color={C.primary} />
+        </View>
+      ) : !data?.length ? (
+        <Text style={s.emptyText}>No leaderboard data yet.</Text>
+      ) : (
+        data.map((entry, i) => (
+          <React.Fragment key={entry.id}>
+            {i > 0 && <View style={s.leaderSep} />}
+            <View style={s.leaderRow}>
+              <Text style={s.medal}>{MEDALS[i] ?? String(i + 1)}</Text>
+              <View style={s.leaderInfo}>
+                <Text style={s.leaderName}>{entry.full_name}</Text>
+                <Text style={s.leaderStreak}>🔥 {entry.streak_count} days</Text>
+              </View>
+              <View style={s.pctPill}>
+                <Text style={s.leaderPct}>{Math.round(entry.punctuality_percentage)}%</Text>
+              </View>
+            </View>
+          </React.Fragment>
+        ))
+      )}
+    </View>
+  );
+}
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function StreaksScreen() {
   const { data: stats, isLoading } = useQuery<AttendanceStats>({
@@ -48,194 +287,299 @@ export default function StreaksScreen() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const streakCount = stats?.current_streak ?? 0;
-  const bestStreak = stats?.longest_streak ?? 0;
+  const streakCount = stats?.current_streak  ?? 0;
+  const bestStreak  = stats?.longest_streak  ?? 0;
   const punctuality = stats?.punctuality_percentage ?? null;
 
-  const achievements = [
-    { icon: '🔥', label: '7-Day Streak', desc: 'Check in 7 days in a row', unlocked: streakCount >= 7 },
-    { icon: '⚡', label: '14-Day Streak', desc: 'Two weeks strong', unlocked: streakCount >= 14 },
-    { icon: '🌟', label: '30-Day Streak', desc: 'A full month of dedication', unlocked: streakCount >= 30 },
-    { icon: '💎', label: '100% Punctual Month', desc: 'Never late in a month', unlocked: (punctuality ?? 0) >= 100 },
-  ];
+  // Build placeholder present/absent sets from stats (real data would come from calendar API)
+  const presentDays = new Set<number>();
+  const absentDays  = new Set<number>();
+
+  const motivation = getMotivation(streakCount);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={s.root} edges={['top']}>
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
 
-        {/* Title */}
-        <View style={styles.titleRow}>
-          <Text style={styles.title}>Streaks & Achievements</Text>
-          <View style={styles.titleBadge}>
-            <MaterialCommunityIcons name="trophy-outline" size={16} color="#F59E0B" />
-          </View>
-        </View>
+      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
-        {/* Flame + Streak Count */}
-        <Surface style={styles.card} elevation={1}>
+        {/* ── Hero ── */}
+        <LinearGradient
+          colors={['#1C1917', '#0F172A']}
+          style={s.hero}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+        >
+          <Text style={s.heroFlame}>🔥</Text>
+
           {isLoading ? (
-            <View style={styles.loadingBox}>
-              <ActivityIndicator color="#EA580C" size="large" />
-            </View>
+            <ActivityIndicator size="large" color={C.warning} style={{ marginVertical: 8 }} />
           ) : (
-            <FlameAnimation streakCount={streakCount} />
+            <Text style={s.heroNumber}>{streakCount}</Text>
           )}
-          <Text style={styles.motivation}>{getMotivation(streakCount)}</Text>
-        </Surface>
 
-        {/* Stats Row */}
-        <View style={styles.statsRow}>
+          <Text style={s.heroStreakLabel}>day streak</Text>
+          <Text style={s.heroMotivation}>{motivation}</Text>
+        </LinearGradient>
+
+        {/* ── Stats row ── */}
+        <View style={s.statsRow}>
           {[
             {
-              label: 'This Month',
+              label: 'On-time',
               value: punctuality !== null ? `${Math.round(punctuality)}%` : '—',
-              color: '#10B981',
-              icon: 'calendar-month-outline',
+              color: C.success,
+              icon:  'clock-check-outline',
             },
             {
               label: 'Current',
               value: String(streakCount),
-              color: '#EA580C',
-              icon: 'fire',
+              color: '#F97316',
+              icon:  'fire',
             },
             {
-              label: 'Best Ever',
+              label: 'Best',
               value: String(bestStreak),
-              color: '#4F46E5',
-              icon: 'medal-outline',
+              color: C.primary,
+              icon:  'medal-outline',
             },
           ].map(item => (
-            <Surface key={item.label} style={styles.statCard} elevation={0}>
-              <View style={[styles.statIcon, { backgroundColor: `${item.color}18` }]}>
+            <View key={item.label} style={s.statCard}>
+              <View style={[s.statIconWrap, { backgroundColor: `${item.color}18` }]}>
                 <MaterialCommunityIcons name={item.icon as any} size={18} color={item.color} />
               </View>
               {isLoading ? (
                 <ActivityIndicator size="small" color={item.color} />
               ) : (
-                <Text style={[styles.statValue, { color: item.color }]}>{item.value}</Text>
+                <Text style={[s.statValue, { color: item.color }]}>{item.value}</Text>
               )}
-              <Text style={styles.statLabel}>{item.label}</Text>
-            </Surface>
+              <Text style={s.statLabel}>{item.label}</Text>
+            </View>
           ))}
         </View>
 
-        {/* Achievements */}
-        <Text style={styles.sectionTitle}>Achievements</Text>
-        <Surface style={styles.card} elevation={1}>
-          {achievements.map((a, idx) => (
-            <View key={a.label} style={[styles.achievement, idx < achievements.length - 1 && styles.achievementBorder]}>
-              <View style={[styles.achieveBadge, a.unlocked ? styles.achieveBadgeUnlocked : styles.achieveBadgeLocked]}>
-                <Text style={styles.achIcon}>{a.icon}</Text>
-              </View>
-              <View style={styles.achieveInfo}>
-                <Text style={[styles.achLabel, !a.unlocked && styles.lockedText]}>{a.label}</Text>
-                <Text style={styles.achDesc}>{a.desc}</Text>
-              </View>
-              {a.unlocked ? (
-                <View style={styles.unlockedBadge}>
-                  <MaterialCommunityIcons name="check-circle" size={22} color="#10B981" />
-                </View>
-              ) : (
-                <MaterialCommunityIcons name="lock-outline" size={20} color="#CBD5E1" />
-              )}
-            </View>
-          ))}
-        </Surface>
+        {/* ── Streak calendar ── */}
+        <StreakCalendar presentDays={presentDays} absentDays={absentDays} />
 
-        {/* Leaderboard */}
-        <Text style={styles.sectionTitle}>Top Performers</Text>
-        <Surface style={styles.card} elevation={1}>
-          {leaderboardLoading ? (
-            <View style={styles.loadingBox}>
-              <ActivityIndicator color="#4F46E5" />
-            </View>
-          ) : !leaderboardData?.length ? (
-            <Text style={[styles.motivation, { padding: 8 }]}>No leaderboard data yet.</Text>
-          ) : (
-            leaderboardData.map((entry, i) => (
-              <View key={entry.id} style={[styles.leaderRow, i < leaderboardData.length - 1 && styles.leaderBorder]}>
-                <Text style={styles.medal}>{MEDALS[i] ?? String(i + 1)}</Text>
-                <View style={styles.leaderInfo}>
-                  <Text style={styles.leaderName}>{entry.full_name}</Text>
-                  <Text style={styles.leaderStreak}>🔥 {entry.streak_count} days</Text>
-                </View>
-                <View style={styles.pctPill}>
-                  <Text style={styles.leaderPunctuality}>{Math.round(entry.punctuality_percentage)}%</Text>
-                </View>
-              </View>
-            ))
-          )}
-        </Surface>
+        {/* ── Milestone badges ── */}
+        <MilestoneBadges streakCount={streakCount} />
 
-        <View style={{ height: 16 }} />
+        {/* ── Leaderboard ── */}
+        <Leaderboard data={leaderboardData} isLoading={leaderboardLoading} />
+
+        <View style={{ height: 40 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  content: { padding: 16, gap: 12 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { fontSize: 22, fontWeight: '800', color: '#1E293B' },
-  titleBadge: {
-    width: 32, height: 32, borderRadius: 10,
-    backgroundColor: '#FEF3C7',
-    alignItems: 'center', justifyContent: 'center',
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const s = StyleSheet.create({
+  root:   { flex: 1, backgroundColor: C.bg },
+  scroll: { gap: 12 },
+
+  // ── Hero
+  hero: {
+    alignItems: 'center',
+    paddingTop: 36,
+    paddingBottom: 32,
+    paddingHorizontal: 24,
+    gap: 4,
   },
-  card: {
-    borderRadius: 16, padding: 16, backgroundColor: '#FFFFFF',
-    borderWidth: 1, borderColor: '#F1F5F9',
+  heroFlame: {
+    fontSize: 48,
+    lineHeight: 56,
   },
-  loadingBox: { alignItems: 'center', paddingVertical: 32 },
-  flameContainer: { alignItems: 'center', paddingVertical: 20, borderRadius: 12 },
-  flameEmoji: { fontSize: 72, lineHeight: 80 },
-  streakNumber: { fontSize: 52, fontWeight: '900', lineHeight: 60 },
-  streakLabel: { fontSize: 15, color: '#9A3412', fontWeight: '600' },
-  legendaryBadge: { fontSize: 16, marginTop: 8 },
-  motivation: {
-    textAlign: 'center', fontSize: 14, color: '#64748B',
-    marginTop: 12, paddingHorizontal: 8, lineHeight: 20,
+  heroNumber: {
+    fontSize: 64,
+    fontWeight: '900',
+    color: C.textPrimary,
+    lineHeight: 72,
+    letterSpacing: -2,
   },
-  statsRow: { flexDirection: 'row', gap: 10 },
+  heroStreakLabel: {
+    fontSize: 16,
+    color: C.textMuted,
+    fontWeight: '500',
+  },
+  heroMotivation: {
+    fontSize: 13,
+    color: C.textSecondary,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+
+  // ── Stats row
+  statsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 16,
+  },
   statCard: {
-    flex: 1, borderRadius: 14, padding: 12,
-    alignItems: 'center', backgroundColor: '#FFFFFF',
-    borderWidth: 1, borderColor: '#F1F5F9', gap: 4,
+    flex: 1,
+    backgroundColor: C.surface,
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: C.border,
   },
-  statIcon: {
-    width: 34, height: 34, borderRadius: 10,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 2,
+  statIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
   },
-  statValue: { fontSize: 20, fontWeight: '800' },
-  statLabel: { fontSize: 10, color: '#94A3B8', fontWeight: '600', textAlign: 'center' },
+  statValue: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  statLabel: {
+    fontSize: 10,
+    color: C.textMuted,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  // ── Section card
+  sectionCard: {
+    backgroundColor: C.surface,
+    borderRadius: 16,
+    padding: 16,
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: C.border,
+    gap: 10,
+  },
+  sectionCardNoPad: {
+    backgroundColor: C.surface,
+    borderRadius: 16,
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: C.border,
+    overflow: 'hidden',
+    paddingBottom: 16,
+    gap: 10,
+  },
   sectionTitle: {
-    fontSize: 12, fontWeight: '700', color: '#94A3B8',
-    textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 4,
+    fontSize: 16,
+    fontWeight: '700',
+    color: C.textPrimary,
   },
-  achievement: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12 },
-  achievementBorder: { borderBottomWidth: 1, borderBottomColor: '#F8FAFC' },
-  achieveBadge: {
-    width: 44, height: 44, borderRadius: 12,
-    alignItems: 'center', justifyContent: 'center',
+  emptyText: {
+    fontSize: 13,
+    color: C.textMuted,
+    paddingVertical: 8,
   },
-  achieveBadgeUnlocked: { backgroundColor: '#F0FDF4' },
-  achieveBadgeLocked: { backgroundColor: '#F8FAFC' },
-  achIcon: { fontSize: 24 },
-  achieveInfo: { flex: 1 },
-  achLabel: { fontSize: 14, fontWeight: '700', color: '#1E293B' },
-  achDesc: { fontSize: 12, color: '#94A3B8', marginTop: 1 },
-  lockedText: { color: '#CBD5E1' },
-  unlockedBadge: {},
-  leaderRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, gap: 12 },
-  leaderBorder: { borderBottomWidth: 1, borderBottomColor: '#F8FAFC' },
-  medal: { fontSize: 22, width: 32, textAlign: 'center' },
+  loadingBox: {
+    alignItems: 'center',
+    paddingVertical: 24,
+  },
+
+  // ── Calendar
+  calRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  calCell: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+  },
+  calHeader: {
+    fontSize: 10,
+    color: C.textMuted,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  calDot: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calDayNum: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: C.textMuted,
+  },
+  calLegend: {
+    flexDirection: 'row',
+    gap: 16,
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  legendRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  legendDot:  { width: 8, height: 8, borderRadius: 4 },
+  legendText: { fontSize: 11, color: C.textSecondary },
+
+  // ── Milestone badges
+  badgesRow: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+  },
+  badgeCard: {
+    width: 110,
+    borderRadius: 14,
+    padding: 14,
+    alignItems: 'center',
+    gap: 6,
+  },
+  badgeEmoji: {
+    fontSize: 32,
+    lineHeight: 38,
+  },
+  badgeLockWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: C.surface2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: C.textPrimary,
+    textAlign: 'center',
+  },
+  badgeTier: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: C.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  // ── Leaderboard
+  leaderSep:  { height: 1, backgroundColor: C.border },
+  leaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 11,
+    gap: 12,
+  },
+  medal:      { fontSize: 22, width: 32, textAlign: 'center' },
   leaderInfo: { flex: 1 },
-  leaderName: { fontSize: 14, fontWeight: '700', color: '#1E293B' },
-  leaderStreak: { fontSize: 12, color: '#EA580C', marginTop: 1 },
+  leaderName: { fontSize: 14, fontWeight: '700', color: C.textPrimary },
+  leaderStreak: { fontSize: 12, color: '#F97316', marginTop: 1 },
   pctPill: {
-    backgroundColor: '#D1FAE5', borderRadius: 20,
-    paddingHorizontal: 10, paddingVertical: 4,
+    backgroundColor: C.successLight,
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  leaderPunctuality: { fontSize: 13, fontWeight: '800', color: '#059669' },
+  leaderPct: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: C.success,
+  },
 });

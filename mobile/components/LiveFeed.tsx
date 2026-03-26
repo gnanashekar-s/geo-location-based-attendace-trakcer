@@ -9,6 +9,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useAuthStore } from '@/store/authStore';
 import { FraudBadge } from './FraudBadge';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -116,7 +117,7 @@ const EmptyFeed: React.FC<{ isConnected: boolean }> = ({ isConnected }) => (
     <MaterialCommunityIcons
       name={isConnected ? 'radio-tower' : 'wifi-off'}
       size={40}
-      color="#D1D5DB"
+      color="#52525B"
     />
     <Text style={styles.emptyTitle}>
       {isConnected ? 'Waiting for activity…' : 'Connecting to feed…'}
@@ -146,13 +147,27 @@ export const LiveFeed: React.FC<LiveFeedProps> = ({
   maxItems = 50,
   onNewEvent,
 }) => {
+  const isDemoMode = useAuthStore(s => s.isDemoMode);
   const { messages, isConnected } = useWebSocket<LiveCheckInEvent>('feed');
   const flatListRef = useRef<FlatList<LiveCheckInEvent>>(null);
   const prevLengthRef = useRef<number>(0);
 
-  const events = messages
-    .map((m) => m.data)
-    .slice(0, maxItems) as LiveCheckInEvent[];
+  // In demo mode, use static demo events instead of WebSocket
+  const demoEvents: LiveCheckInEvent[] = React.useMemo(() => {
+    if (!isDemoMode) return [];
+    const now = new Date();
+    return [
+      { id: 'dl-1', user_id: 'demo-emp-002', user_name: 'Emily Chen', user_email: 'emily@demo', avatar_url: null, event_type: 'checkin' as const, site_name: 'HQ – Downtown Office', latitude: 28.6139, longitude: 77.2090, fraud_score: 0.02, fraud_flags: [], timestamp: new Date(now.getTime() - 120000).toISOString() },
+      { id: 'dl-2', user_id: 'demo-emp-003', user_name: 'Raj Patel', user_email: 'raj@demo', avatar_url: null, event_type: 'checkin' as const, site_name: 'HQ – Downtown Office', latitude: 28.6140, longitude: 77.2091, fraud_score: 0.05, fraud_flags: [], timestamp: new Date(now.getTime() - 300000).toISOString() },
+      { id: 'dl-3', user_id: 'demo-emp-004', user_name: 'Maria Garcia', user_email: 'maria@demo', avatar_url: null, event_type: 'checkin' as const, site_name: 'Warehouse – Industrial Zone', latitude: 28.5355, longitude: 77.3910, fraud_score: 0.01, fraud_flags: [], timestamp: new Date(now.getTime() - 600000).toISOString() },
+      { id: 'dl-4', user_id: 'demo-emp-006', user_name: 'Lisa Wang', user_email: 'lisa@demo', avatar_url: null, event_type: 'checkout' as const, site_name: 'HQ – Downtown Office', latitude: 28.6139, longitude: 77.2090, fraud_score: 0.03, fraud_flags: [], timestamp: new Date(now.getTime() - 900000).toISOString() },
+      { id: 'dl-5', user_id: 'demo-emp-007', user_name: 'David Brown', user_email: 'david@demo', avatar_url: null, event_type: 'checkin' as const, site_name: 'HQ – Downtown Office', latitude: 28.6145, longitude: 77.2085, fraud_score: 0.68, fraud_flags: ['vpn_detected'], timestamp: new Date(now.getTime() - 1500000).toISOString() },
+    ];
+  }, [isDemoMode]);
+
+  const events = isDemoMode
+    ? demoEvents.slice(0, maxItems)
+    : (messages.map((m) => m.data).slice(0, maxItems) as LiveCheckInEvent[]);
 
   // Notify parent + auto-scroll on new events
   useEffect(() => {
@@ -176,15 +191,17 @@ export const LiveFeed: React.FC<LiveFeedProps> = ({
     [],
   );
 
+  const effectiveConnected = isDemoMode ? true : isConnected;
+
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Live Feed</Text>
         <View style={styles.statusRow}>
-          <ConnectionDot isConnected={isConnected} />
+          <ConnectionDot isConnected={effectiveConnected} />
           <Text style={styles.statusText}>
-            {isConnected ? 'Live' : 'Reconnecting'}
+            {isDemoMode ? 'Demo' : effectiveConnected ? 'Live' : 'Reconnecting'}
           </Text>
         </View>
       </View>
@@ -195,7 +212,7 @@ export const LiveFeed: React.FC<LiveFeedProps> = ({
         data={events}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        ListEmptyComponent={<EmptyFeed isConnected={isConnected} />}
+        ListEmptyComponent={<EmptyFeed isConnected={effectiveConnected} />}
         contentContainerStyle={
           events.length === 0 ? styles.emptyList : styles.listContent
         }
@@ -214,7 +231,7 @@ export const LiveFeed: React.FC<LiveFeedProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#09090B',
   },
   header: {
     flexDirection: 'row',
@@ -222,14 +239,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#18181B',
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: 'rgba(255,255,255,0.06)',
   },
   headerTitle: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#111827',
+    color: '#FAFAFA',
   },
   statusRow: {
     flexDirection: 'row',
@@ -243,7 +260,7 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: '#A1A1AA',
     fontWeight: '500',
   },
   listContent: {
@@ -256,17 +273,14 @@ const styles = StyleSheet.create({
   feedItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#18181B',
     marginHorizontal: 12,
     marginVertical: 4,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
     gap: 10,
   },
   avatar: {
@@ -292,12 +306,12 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1F2937',
+    color: '#FAFAFA',
     flex: 1,
   },
   timestamp: {
     fontSize: 11,
-    color: '#9CA3AF',
+    color: '#71717A',
     marginLeft: 8,
   },
   itemSubRow: {
@@ -311,11 +325,11 @@ const styles = StyleSheet.create({
   },
   separator: {
     fontSize: 12,
-    color: '#D1D5DB',
+    color: '#3F3F46',
   },
   siteName: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#71717A',
     flex: 1,
   },
   emptyContainer: {
@@ -329,12 +343,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#6B7280',
+    color: '#71717A',
     textAlign: 'center',
   },
   emptySubtitle: {
     fontSize: 13,
-    color: '#9CA3AF',
+    color: '#52525B',
     textAlign: 'center',
     lineHeight: 20,
   },

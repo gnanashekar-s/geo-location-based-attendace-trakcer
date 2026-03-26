@@ -7,8 +7,9 @@ import {
   ActivityIndicator,
   Pressable,
   Animated,
+  StatusBar,
 } from 'react-native';
-import { Text, Button, Surface, Chip } from 'react-native-paper';
+import { Text, Button } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Circle, Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -17,13 +18,27 @@ import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { LinearGradient } from 'expo-linear-gradient';
 import { attendanceApi, sitesApi } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 import type { CheckInPayload, AttendanceToday } from '@/types';
 
+// ─── Design System ────────────────────────────────────────────────────────────
+
+const C = {
+  bg: '#09090B', surface: '#18181B', surface2: '#27272A',
+  border: 'rgba(255,255,255,0.06)', borderStrong: 'rgba(255,255,255,0.12)',
+  primary: '#6366F1', primaryDark: '#4F46E5', accent: '#8B5CF6',
+  success: '#22C55E', successLight: 'rgba(34,197,94,0.10)',
+  warning: '#F59E0B', warningLight: 'rgba(245,158,11,0.10)',
+  danger: '#EF4444', dangerLight: 'rgba(239,68,68,0.10)',
+  purple: '#A855F7', purpleLight: 'rgba(168,85,247,0.10)',
+  teal: '#14B8A6', tealLight: 'rgba(20,184,166,0.10)',
+  textPrimary: '#FAFAFA', textSecondary: '#A1A1AA', textMuted: '#71717A',
+};
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// Fallback office location used while site data is loading
 const DEFAULT_OFFICE = {
   latitude: 3.1478,
   longitude: 101.6953,
@@ -37,7 +52,7 @@ function haversineDistance(
   lat1: number, lon1: number,
   lat2: number, lon2: number
 ): number {
-  const R = 6371000; // metres
+  const R = 6371000;
   const φ1 = (lat1 * Math.PI) / 180;
   const φ2 = (lat2 * Math.PI) / 180;
   const Δφ = ((lat2 - lat1) * Math.PI) / 180;
@@ -53,7 +68,22 @@ function formatDistance(metres: number): string {
   return `${(metres / 1000).toFixed(1)}km`;
 }
 
-// ─── Animated Dot ─────────────────────────────────────────────────────────────
+// ─── Dark Map Style ───────────────────────────────────────────────────────────
+
+const DARK_MAP_STYLE = [
+  { elementType: 'geometry', stylers: [{ color: '#0f172a' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#64748b' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#0f172a' }] },
+  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#0f172a' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#334155' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0c1a2e' }] },
+];
+
+// ─── Pulsing Map Dot ──────────────────────────────────────────────────────────
 
 function PulsingDot() {
   const opacity = useRef(new Animated.Value(1)).current;
@@ -96,17 +126,56 @@ const dotStyles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: 'rgba(59,130,246,0.3)',
+    backgroundColor: 'rgba(99,102,241,0.4)',
   },
   dot: {
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#3B82F6',
+    backgroundColor: C.primary,
     borderWidth: 2,
     borderColor: '#FFFFFF',
   },
 });
+
+// ─── Pulsing Check-In Button Ring ─────────────────────────────────────────────
+
+function PulseRing({ color }: { color: string }) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const opacityAnim = useRef(new Animated.Value(0.6)).current;
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(pulseAnim, { toValue: 1.3, duration: 800, useNativeDriver: true }),
+          Animated.timing(opacityAnim, { toValue: 0, duration: 800, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+          Animated.timing(opacityAnim, { toValue: 0.6, duration: 800, useNativeDriver: true }),
+        ]),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, []);
+
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        width: 90,
+        height: 90,
+        borderRadius: 45,
+        borderWidth: 2,
+        borderColor: color,
+        transform: [{ scale: pulseAnim }],
+        opacity: opacityAnim,
+      }}
+    />
+  );
+}
 
 // ─── Camera Sheet ─────────────────────────────────────────────────────────────
 
@@ -116,15 +185,14 @@ interface CameraSheetProps {
 }
 
 function CameraSheet({ onCapture, onClose }: CameraSheetProps) {
-  // Camera not supported on web — auto-close
   if (Platform.OS === 'web') {
     return (
       <View style={cameraStyles.permissionContainer}>
-        <MaterialCommunityIcons name="camera-off" size={48} color="#94A3B8" />
+        <MaterialCommunityIcons name="camera-off" size={48} color={C.textSecondary} />
         <Text style={cameraStyles.permissionText}>
           Selfie verification is not available on web. Your attendance will be recorded without a photo.
         </Text>
-        <Button mode="contained" onPress={onClose} buttonColor="#4F46E5">
+        <Button mode="contained" onPress={onClose} buttonColor={C.primary}>
           Continue Without Photo
         </Button>
       </View>
@@ -168,14 +236,14 @@ function CameraSheet({ onCapture, onClose }: CameraSheetProps) {
   if (!permission.granted) {
     return (
       <View style={cameraStyles.permissionContainer}>
-        <MaterialCommunityIcons name="camera-off" size={48} color="#94A3B8" />
+        <MaterialCommunityIcons name="camera-off" size={48} color={C.textSecondary} />
         <Text style={cameraStyles.permissionText}>
           Camera permission is required for attendance verification.
         </Text>
-        <Button mode="contained" onPress={requestPermission} buttonColor="#4F46E5">
+        <Button mode="contained" onPress={requestPermission} buttonColor={C.primary}>
           Grant Permission
         </Button>
-        <Button onPress={onClose}>Skip</Button>
+        <Button onPress={onClose} textColor={C.textSecondary}>Skip</Button>
       </View>
     );
   }
@@ -188,29 +256,23 @@ function CameraSheet({ onCapture, onClose }: CameraSheetProps) {
         facing="front"
       >
         <View style={cameraStyles.overlay}>
-          {/* Face guide oval */}
           <View style={cameraStyles.faceGuide} />
-          <Text style={cameraStyles.guideText}>
-            Position your face in the oval
-          </Text>
-
+          <Text style={cameraStyles.guideText}>Position your face in the oval</Text>
           <View style={cameraStyles.controls}>
             <Pressable style={cameraStyles.cancelBtn} onPress={onClose}>
               <MaterialCommunityIcons name="close" size={28} color="#FFFFFF" />
             </Pressable>
-
             <Pressable
               style={[cameraStyles.captureBtn, capturing && { opacity: 0.6 }]}
               onPress={takePhoto}
               disabled={capturing}
             >
               {capturing ? (
-                <ActivityIndicator color="#4F46E5" />
+                <ActivityIndicator color={C.primary} />
               ) : (
                 <View style={cameraStyles.captureBtnInner} />
               )}
             </Pressable>
-
             <View style={{ width: 48 }} />
           </View>
         </View>
@@ -225,9 +287,7 @@ const cameraStyles = StyleSheet.create({
     zIndex: 100,
     backgroundColor: '#000',
   },
-  camera: {
-    flex: 1,
-  },
+  camera: { flex: 1 },
   overlay: {
     flex: 1,
     alignItems: 'center',
@@ -310,7 +370,6 @@ export default function CheckInScreen() {
   const user = useAuthStore((s) => s.user);
   const orgId = user?.org_id ?? '';
 
-  // Fetch sites from API
   const { data: sitesData } = useQuery({
     queryKey: ['sites', orgId],
     queryFn: () => sitesApi.list(orgId).then((r) => r.data),
@@ -318,7 +377,6 @@ export default function CheckInScreen() {
     staleTime: 5 * 60_000,
   });
 
-  // Use first active site; fall back to DEFAULT_OFFICE while loading
   const activeSite = sitesData?.find((s) => s.is_active) ?? null;
   const office = activeSite
     ? {
@@ -326,10 +384,10 @@ export default function CheckInScreen() {
         longitude: activeSite.center_lng,
         radius: activeSite.radius_meters,
         name: activeSite.name,
+        address: activeSite.address ?? null,
       }
-    : DEFAULT_OFFICE;
+    : { ...DEFAULT_OFFICE, address: null };
 
-  // Today's attendance status
   const { data: todayData } = useQuery<AttendanceToday>({
     queryKey: ['attendance', 'today'],
     queryFn: () => attendanceApi.today().then((r) => r.data),
@@ -337,7 +395,6 @@ export default function CheckInScreen() {
 
   const isCheckedIn = !!(todayData?.check_in_time && !todayData?.check_out_time);
 
-  // Distance & geofence
   const distance = location
     ? haversineDistance(
         location.coords.latitude,
@@ -371,7 +428,6 @@ export default function CheckInScreen() {
           setLocation(loc);
           setIsMocked(!!(loc as any).mocked);
 
-          // Pan map to current position
           mapRef.current?.animateToRegion(
             {
               latitude: loc.coords.latitude,
@@ -390,7 +446,7 @@ export default function CheckInScreen() {
     };
   }, []);
 
-  // ── Check-in / out mutation ───────────────────────────────────────────────
+  // ── Mutation ──────────────────────────────────────────────────────────────
 
   const checkInMutation = useMutation({
     mutationFn: (payload: CheckInPayload) => attendanceApi.checkIn(payload),
@@ -460,6 +516,19 @@ export default function CheckInScreen() {
     setShowCamera(false);
   }, []);
 
+  const submitCheckIn = useCallback(() => {
+    if (!location) return;
+    const payload: CheckInPayload = {
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
+      accuracy: location.coords.accuracy ?? 0,
+      altitude: location.coords.altitude ?? undefined,
+      photo_base64: capturedPhoto ?? undefined,
+      is_checkout: isCheckedIn,
+    };
+    checkInMutation.mutate(payload);
+  }, [location, capturedPhoto, isCheckedIn]);
+
   const handleCheckIn = useCallback(() => {
     if (!location) {
       Alert.alert('No Location', 'Waiting for GPS signal. Please try again in a moment.');
@@ -493,24 +562,16 @@ export default function CheckInScreen() {
     }
 
     submitCheckIn();
-  }, [location, isMocked, withinGeofence, distance, capturedPhoto]);
+  }, [location, isMocked, withinGeofence, distance, capturedPhoto, submitCheckIn]);
 
-  const submitCheckIn = useCallback(() => {
-    if (!location) return;
-    const payload: CheckInPayload = {
-      latitude: location.coords.latitude,
-      longitude: location.coords.longitude,
-      accuracy: location.coords.accuracy ?? 0,
-      altitude: location.coords.altitude ?? undefined,
-      photo_base64: capturedPhoto ?? undefined,
-      is_checkout: isCheckedIn,
-    };
-    checkInMutation.mutate(payload);
-  }, [location, capturedPhoto, isCheckedIn]);
+  // ── Render vars ───────────────────────────────────────────────────────────
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const geofenceColor = withinGeofence ? C.success : C.danger;
+  const checkBtnColor = isCheckedIn ? C.accent : C.primary;
+  const checkBtnGradient: [string, string] = isCheckedIn
+    ? ['#7C3AED', '#4F46E5']
+    : ['#6366F1', '#8B5CF6'];
 
-  const geofenceColor = withinGeofence ? '#10B981' : '#EF4444';
   const initialRegion = {
     latitude: office.latitude,
     longitude: office.longitude,
@@ -518,42 +579,57 @@ export default function CheckInScreen() {
     longitudeDelta: 0.005,
   };
 
+  // ── JSX ───────────────────────────────────────────────────────────────────
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color="#1E293B" />
-        </Pressable>
-        <Text style={styles.headerTitle}>
-          {isCheckedIn ? 'Check Out' : 'Check In'}
-        </Text>
-        <View style={{ width: 40 }} />
-      </View>
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
 
-      {/* Mock location warning */}
+      {/* ── Gradient Header ── */}
+      <LinearGradient
+        colors={['#1E1B4B', C.bg]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.header}
+      >
+        <Pressable style={styles.backBtn} onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={22} color={C.textPrimary} />
+        </Pressable>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>
+            {isCheckedIn ? 'Check Out' : 'Check In'}
+          </Text>
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
+            {office.name}
+          </Text>
+        </View>
+        <View style={{ width: 40 }} />
+      </LinearGradient>
+
+      {/* ── Mock Location Warning ── */}
       {isMocked && (
         <View style={styles.mockWarning}>
-          <MaterialCommunityIcons name="alert" size={16} color="#FFFFFF" />
+          <MaterialCommunityIcons name="alert" size={15} color="#FFFFFF" />
           <Text style={styles.mockWarningText}>
             Fake GPS detected — attendance may be flagged
           </Text>
         </View>
       )}
 
-      {/* Map */}
+      {/* ── Map Section ── */}
       <View style={styles.mapContainer}>
         <MapView
           ref={mapRef}
           style={styles.map}
           provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
           initialRegion={initialRegion}
+          customMapStyle={DARK_MAP_STYLE}
           showsUserLocation={false}
           showsMyLocationButton={false}
-          showsCompass
+          showsCompass={false}
           rotateEnabled={false}
         >
-          {/* Office geofence circle */}
+          {/* Geofence circle */}
           <Circle
             center={{ latitude: office.latitude, longitude: office.longitude }}
             radius={office.radius}
@@ -566,10 +642,10 @@ export default function CheckInScreen() {
           <Marker
             coordinate={{ latitude: office.latitude, longitude: office.longitude }}
             title={office.name}
-            pinColor="#4F46E5"
+            pinColor={C.primary}
           />
 
-          {/* Animated user location dot */}
+          {/* User location dot */}
           {location && (
             <Marker
               coordinate={{
@@ -583,66 +659,98 @@ export default function CheckInScreen() {
           )}
         </MapView>
 
-        {/* GPS loading overlay */}
+        {/* GPS acquiring overlay */}
         {!location && !locationError && (
           <View style={styles.gpsLoading}>
-            <ActivityIndicator color="#4F46E5" size="small" />
+            <ActivityIndicator color={C.primary} size="small" />
             <Text style={styles.gpsLoadingText}>Acquiring GPS…</Text>
+          </View>
+        )}
+
+        {/* Location error overlay */}
+        {locationError && (
+          <View style={styles.gpsError}>
+            <MaterialCommunityIcons name="map-marker-off" size={16} color={C.danger} />
+            <Text style={styles.gpsErrorText}>{locationError}</Text>
           </View>
         )}
       </View>
 
-      {/* Info Panel */}
-      <Surface style={styles.panel} elevation={4}>
-        {/* Distance + geofence status */}
-        <View style={styles.distanceRow}>
-          <MaterialCommunityIcons
-            name={withinGeofence ? 'map-marker-check' : 'map-marker-remove'}
-            size={24}
-            color={geofenceColor}
-          />
-          <View style={styles.distanceInfo}>
-            {distance !== null ? (
-              <>
-                <Text style={styles.distanceText}>
-                  You are{' '}
-                  <Text style={[styles.distanceValue, { color: geofenceColor }]}>
-                    {formatDistance(distance)}
-                  </Text>{' '}
-                  from {office.name}
+      {/* ── Bottom Panel ── */}
+      <View style={styles.panel}>
+
+        {/* Location Status Card */}
+        <View style={[
+          styles.locationCard,
+          {
+            backgroundColor: withinGeofence
+              ? C.successLight
+              : distance === null
+              ? 'rgba(148,163,184,0.08)'
+              : C.dangerLight,
+            borderColor: withinGeofence
+              ? `${C.success}40`
+              : distance === null
+              ? C.border
+              : `${C.danger}40`,
+          },
+        ]}>
+          <View style={styles.locationCardRow}>
+            <MaterialCommunityIcons
+              name="crosshairs-gps"
+              size={16}
+              color={location ? C.primary : C.textMuted}
+            />
+            <Text style={styles.coordsText} numberOfLines={1}>
+              {location
+                ? `${location.coords.latitude.toFixed(6)}, ${location.coords.longitude.toFixed(6)}`
+                : 'Acquiring GPS…'}
+            </Text>
+            {location && (
+              <View style={styles.accuracyBadge}>
+                <Text style={styles.accuracyText}>
+                  ±{Math.round(location.coords.accuracy ?? 0)}m
                 </Text>
-                <Text
-                  style={[
-                    styles.geofenceStatus,
-                    { color: geofenceColor },
-                  ]}
-                >
-                  {withinGeofence ? 'Within geofence ✓' : 'Outside geofence'}
-                </Text>
-              </>
-            ) : (
-              <Text style={styles.distanceText}>
-                {locationError ?? 'Calculating distance…'}
-              </Text>
+              </View>
             )}
           </View>
 
-          {/* Accuracy badge */}
-          {location && (
-            <Chip
-              compact
-              style={styles.accuracyChip}
-              textStyle={styles.accuracyChipText}
-            >
-              ±{Math.round(location.coords.accuracy ?? 0)}m
-            </Chip>
-          )}
+          <View style={styles.locationCardRow}>
+            <MaterialCommunityIcons
+              name={withinGeofence ? 'map-marker-check' : distance === null ? 'map-marker-outline' : 'map-marker-remove'}
+              size={16}
+              color={withinGeofence ? C.success : distance === null ? C.textMuted : C.danger}
+            />
+            <Text style={styles.locationCardLabel}>Distance to site</Text>
+            <Text style={[styles.locationCardDistance, { color: withinGeofence ? C.success : distance === null ? C.textSecondary : C.danger }]}>
+              {distance !== null ? formatDistance(distance) : '—'}
+            </Text>
+          </View>
+
+          <View style={styles.geofenceBadgeRow}>
+            <View style={[
+              styles.geofenceBadge,
+              {
+                backgroundColor: withinGeofence ? C.successLight : distance === null ? 'rgba(148,163,184,0.1)' : C.dangerLight,
+                borderColor: withinGeofence ? `${C.success}50` : distance === null ? C.border : `${C.danger}50`,
+              },
+            ]}>
+              <View style={[styles.geofenceDot, { backgroundColor: withinGeofence ? C.success : distance === null ? C.textMuted : C.danger }]} />
+              <Text style={[styles.geofenceBadgeText, { color: withinGeofence ? C.success : distance === null ? C.textMuted : C.danger }]}>
+                {withinGeofence
+                  ? 'Within Geofence ✓'
+                  : distance === null
+                  ? 'Locating…'
+                  : 'Outside Geofence ✗'}
+              </Text>
+            </View>
+          </View>
         </View>
 
-        {/* Photo preview */}
+        {/* Photo captured row */}
         {capturedPhoto && (
           <View style={styles.photoRow}>
-            <MaterialCommunityIcons name="camera" size={18} color="#10B981" />
+            <MaterialCommunityIcons name="camera-check" size={16} color={C.success} />
             <Text style={styles.photoText}>Selfie captured</Text>
             <Pressable onPress={() => setCapturedPhoto(null)}>
               <Text style={styles.photoRetake}>Retake</Text>
@@ -650,37 +758,94 @@ export default function CheckInScreen() {
           </View>
         )}
 
-        {/* Action buttons */}
-        <View style={styles.actions}>
-          <Button
-            mode="outlined"
-            icon="camera"
-            onPress={() => setShowCamera(true)}
-            style={styles.cameraBtn}
-            textColor="#4F46E5"
+        {/* Site Info Card */}
+        <View style={styles.siteInfoCard}>
+          <LinearGradient
+            colors={[C.primary, C.accent]}
+            style={styles.siteIconBg}
           >
-            {capturedPhoto ? 'Retake Selfie' : 'Take Selfie'}
-          </Button>
-
-          <Button
-            mode="contained"
-            icon={isCheckedIn ? 'clock-out' : 'clock-in'}
-            onPress={handleCheckIn}
-            loading={checkInMutation.isPending}
-            disabled={checkInMutation.isPending || !location}
-            style={styles.checkInBtn}
-            buttonColor={isCheckedIn ? '#7C3AED' : '#10B981'}
-            contentStyle={styles.checkInBtnContent}
-            labelStyle={styles.checkInBtnLabel}
-          >
-            {checkInMutation.isPending
-              ? 'Submitting…'
-              : isCheckedIn
-              ? 'Check Out'
-              : 'Check In'}
-          </Button>
+            <MaterialCommunityIcons name="office-building" size={16} color="#FFFFFF" />
+          </LinearGradient>
+          <View style={styles.siteInfoText}>
+            <Text style={styles.siteName} numberOfLines={1}>{office.name}</Text>
+            {office.address ? (
+              <Text style={styles.siteAddress} numberOfLines={1}>{office.address}</Text>
+            ) : null}
+            <Text style={styles.siteRadius}>Allowed radius: {office.radius}m</Text>
+          </View>
+          <View style={[
+            styles.siteStatusDot,
+            { backgroundColor: withinGeofence ? C.success : distance === null ? C.warning : C.danger },
+          ]} />
         </View>
-      </Surface>
+
+        {/* Action Row: Selfie + Main check-in button */}
+        <View style={styles.actions}>
+          {/* Selfie button */}
+          <Pressable
+            style={({ pressed }) => [
+              styles.selfieBtn,
+              capturedPhoto && styles.selfieBtnCaptured,
+              pressed && { opacity: 0.8 },
+            ]}
+            onPress={() => setShowCamera(true)}
+          >
+            <MaterialCommunityIcons
+              name={capturedPhoto ? 'camera-check' : 'camera'}
+              size={18}
+              color={capturedPhoto ? C.success : C.textSecondary}
+            />
+            <Text style={[styles.selfieBtnText, capturedPhoto && { color: C.success }]}>
+              {capturedPhoto ? 'Retake' : 'Selfie'}
+            </Text>
+          </Pressable>
+
+          {/* Main circular check-in button with pulsing ring */}
+          <View style={styles.checkBtnWrapper}>
+            {!checkInMutation.isPending && location && (
+              <PulseRing color={checkBtnColor} />
+            )}
+            <Pressable
+              onPress={async () => {
+                if (Platform.OS !== 'web') {
+                  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                }
+                handleCheckIn();
+              }}
+              disabled={checkInMutation.isPending || !location}
+              style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }]}
+            >
+              <LinearGradient
+                colors={
+                  checkInMutation.isPending || !location
+                    ? ['#334155', '#1E293B']
+                    : checkBtnGradient
+                }
+                style={styles.checkBtn}
+              >
+                {checkInMutation.isPending ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <MaterialCommunityIcons
+                    name="fingerprint"
+                    size={36}
+                    color={!location ? C.textMuted : '#FFFFFF'}
+                  />
+                )}
+              </LinearGradient>
+            </Pressable>
+            <Text style={styles.checkBtnLabel}>
+              {checkInMutation.isPending
+                ? 'Submitting…'
+                : !location
+                ? 'Waiting GPS…'
+                : isCheckedIn
+                ? 'Tap to Check Out'
+                : 'Tap to Check In'}
+            </Text>
+          </View>
+        </View>
+      </View>
 
       {/* Camera overlay */}
       {showCamera && (
@@ -698,37 +863,49 @@ export default function CheckInScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: C.bg,
   },
+
+  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    paddingVertical: 14,
   },
   backBtn: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#1E293B',
+    color: C.textPrimary,
+    letterSpacing: -0.2,
   },
+  headerSubtitle: {
+    fontSize: 12,
+    color: C.textMuted,
+    fontWeight: '500',
+  },
+
+  // Mock warning
   mockWarning: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#DC2626',
+    backgroundColor: C.danger,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 9,
     gap: 8,
   },
   mockWarningText: {
@@ -737,9 +914,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
+
+  // Map
   mapContainer: {
     flex: 1,
     position: 'relative',
+    backgroundColor: '#1E293B',
   },
   map: {
     ...StyleSheet.absoluteFillObject,
@@ -751,99 +931,231 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(255,255,255,0.95)',
+    backgroundColor: C.surface,
     borderRadius: 20,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    borderWidth: 1,
+    borderColor: C.border,
   },
   gpsLoadingText: {
     fontSize: 13,
-    color: '#64748B',
+    color: C.textSecondary,
     fontWeight: '500',
   },
-  panel: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    paddingBottom: Platform.OS === 'ios' ? 32 : 20,
-  },
-  distanceRow: {
+  gpsError: {
+    position: 'absolute',
+    top: 12,
+    alignSelf: 'center',
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: C.dangerLight,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: `${C.danger}40`,
+  },
+  gpsErrorText: {
+    fontSize: 13,
+    color: C.danger,
+    fontWeight: '500',
+    maxWidth: 260,
+  },
+
+  // Bottom Panel
+  panel: {
+    backgroundColor: C.surface,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 20,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
     gap: 12,
-    marginBottom: 16,
+    borderTopWidth: 1,
+    borderTopColor: C.border,
   },
-  distanceInfo: {
+
+  // Location Status Card
+  locationCard: {
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    gap: 8,
+  },
+  locationCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  coordsText: {
     flex: 1,
-    gap: 2,
+    fontSize: 12,
+    color: C.textSecondary,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
-  distanceText: {
-    fontSize: 14,
-    color: '#1E293B',
+  accuracyBadge: {
+    backgroundColor: 'rgba(99,102,241,0.15)',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  accuracyText: {
+    fontSize: 11,
+    color: C.primary,
+    fontWeight: '700',
+  },
+  locationCardLabel: {
+    flex: 1,
+    fontSize: 13,
+    color: C.textSecondary,
     fontWeight: '500',
   },
-  distanceValue: {
+  locationCardDistance: {
+    fontSize: 14,
     fontWeight: '800',
-    fontSize: 15,
   },
-  geofenceStatus: {
+  geofenceBadgeRow: {
+    flexDirection: 'row',
+  },
+  geofenceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderWidth: 1,
+  },
+  geofenceDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  geofenceBadgeText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
-  accuracyChip: {
-    backgroundColor: '#EEF2FF',
-    height: 26,
-  },
-  accuracyChipText: {
-    fontSize: 11,
-    color: '#4F46E5',
-    fontWeight: '600',
-  },
+
+  // Photo row
   photoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 16,
-    backgroundColor: '#D1FAE5',
+    backgroundColor: C.successLight,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: `${C.success}40`,
   },
   photoText: {
     flex: 1,
     fontSize: 13,
-    color: '#065F46',
+    color: C.success,
     fontWeight: '500',
   },
   photoRetake: {
     fontSize: 13,
-    color: '#4F46E5',
+    color: C.primary,
     fontWeight: '600',
   },
-  actions: {
+
+  // Site Info Card
+  siteInfoCard: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
+    backgroundColor: C.surface2,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: C.border,
   },
-  cameraBtn: {
+  siteIconBg: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  siteInfoText: {
     flex: 1,
-    borderColor: '#4F46E5',
-    borderRadius: 12,
+    gap: 2,
   },
-  checkInBtn: {
-    flex: 1.5,
-    borderRadius: 12,
-  },
-  checkInBtnContent: {
-    paddingVertical: 4,
-  },
-  checkInBtnLabel: {
+  siteName: {
     fontSize: 15,
     fontWeight: '700',
+    color: C.textPrimary,
+  },
+  siteAddress: {
+    fontSize: 12,
+    color: C.textSecondary,
+  },
+  siteRadius: {
+    fontSize: 11,
+    color: C.textMuted,
+  },
+  siteStatusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    flexShrink: 0,
+  },
+
+  // Actions row
+  actions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+
+  // Selfie button
+  selfieBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    width: 72,
+    height: 72,
+    borderRadius: 16,
+    backgroundColor: C.surface2,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  selfieBtnCaptured: {
+    backgroundColor: C.successLight,
+    borderColor: `${C.success}40`,
+  },
+  selfieBtnText: {
+    fontSize: 11,
+    color: C.textSecondary,
+    fontWeight: '600',
+  },
+
+  // Check-in button
+  checkBtnWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  checkBtn: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  checkBtnLabel: {
+    fontSize: 12,
+    color: C.textSecondary,
+    fontWeight: '600',
   },
 });

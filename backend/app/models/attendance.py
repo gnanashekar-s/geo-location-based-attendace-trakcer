@@ -164,6 +164,13 @@ class AttendanceRecord(Base):
         server_default="true",
         comment="False when fraud_score exceeds the org threshold.",
     )
+    investigation_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="none",
+        server_default="none",
+        comment="Admin investigation workflow state: none / investigating / resolved.",
+    )
 
     # ------------------------------------------------------------------
     # Workflow flags

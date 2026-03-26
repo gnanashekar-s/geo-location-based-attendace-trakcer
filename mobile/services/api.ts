@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { Platform } from 'react-native';
 import { useAuthStore } from '@/store/authStore';
+import * as Demo from '@/services/demoData';
 
 // API URL is set via EXPO_PUBLIC_API_URL in mobile/.env.local (written by start-frontend.ps1).
 // Web always hits localhost directly. Mobile uses the env var (tunnel or local IP).
@@ -39,8 +40,14 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      // Clear auth and let the root layout redirect to login
+    const config = error.config as any;
+    // Only auto-logout on 401 for authenticated requests (not login/register itself)
+    if (
+      error.response?.status === 401 &&
+      !config?.url?.includes('/auth/login') &&
+      !config?.url?.includes('/auth/register') &&
+      !config?.url?.includes('/auth/refresh')
+    ) {
       useAuthStore.getState().logout();
     }
     return Promise.reject(error);
@@ -48,6 +55,15 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+// ─── Demo-mode helper: wraps data in an Axios-like response shape ─────────────
+
+function demoRes<T>(data: T, status = 200) {
+  return Promise.resolve({ data, status, statusText: 'OK', headers: {}, config: {} } as any);
+}
+function isDemoMode() {
+  return useAuthStore.getState().isDemoMode;
+}
 
 // ─── Typed API helpers ────────────────────────────────────────────────────────
 
@@ -74,16 +90,33 @@ import type {
 } from '@/types';
 
 export const authApi = {
-  login: (credentials: LoginCredentials) =>
-    api.post<AuthResponse>('/auth/login', credentials),
-  logout: () => api.post('/auth/logout'),
-  me: () => api.get<import('@/types').User>('/users/me'),
-  register: (payload: { full_name: string; email: string; password: string; role: string }) =>
-    api.post('/auth/register', payload),
-  forgotPassword: (email: string) =>
-    api.post<{ message: string }>('/auth/forgot-password', { email }),
-  resetPassword: (token: string, new_password: string) =>
-    api.post<{ message: string }>('/auth/reset-password', { token, new_password }),
+  login: (credentials: LoginCredentials) => {
+    if (isDemoMode()) return demoRes({ access_token: 'demo-token', token_type: 'bearer', user: Demo.DEMO_EMPLOYEE });
+    return api.post<AuthResponse>('/auth/login', credentials);
+  },
+  logout: (refreshToken?: string | null) => {
+    if (isDemoMode()) return demoRes({});
+    return api.post('/auth/logout', refreshToken ? { refresh_token: refreshToken } : {});
+  },
+  me: () => {
+    if (isDemoMode()) {
+      const user = useAuthStore.getState().user;
+      return demoRes(user ?? Demo.DEMO_EMPLOYEE);
+    }
+    return api.get<import('@/types').User>('/users/me');
+  },
+  register: (payload: { full_name: string; email: string; password: string; role: string }) => {
+    if (isDemoMode()) return demoRes({ ...Demo.DEMO_EMPLOYEE, ...payload });
+    return api.post('/auth/register', payload);
+  },
+  forgotPassword: (email: string) => {
+    if (isDemoMode()) return demoRes({ message: 'Demo: Reset link sent (not really)' });
+    return api.post<{ message: string }>('/auth/forgot-password', { email });
+  },
+  resetPassword: (token: string, new_password: string) => {
+    if (isDemoMode()) return demoRes({ message: 'Demo: Password reset (not really)' });
+    return api.post<{ message: string }>('/auth/reset-password', { token, new_password });
+  },
 };
 
 // ─── Field-mapping helpers ────────────────────────────────────────────────────
@@ -113,6 +146,10 @@ function mapEventToRecord(rec: any): AttendanceRecord {
 
 export const attendanceApi = {
   checkIn: (payload: CheckInPayload) => {
+    if (isDemoMode()) {
+      const isCheckout = !!payload.is_checkout;
+      return demoRes(Demo.getDemoCheckinResponse(isCheckout));
+    }
     // Map frontend payload fields to backend schema
     const body = {
       lat: payload.latitude,
@@ -138,8 +175,9 @@ export const attendanceApi = {
     }));
   },
 
-  today: () =>
-    api.get<any[]>('/attendance/today').then(r => {
+  today: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_TODAY);
+    return api.get<any[]>('/attendance/today').then(r => {
       const records: any[] = Array.isArray(r.data) ? r.data : [];
       const checkin = records.find((rec: any) => rec.event_type === 'checkin');
       const checkout = records.find((rec: any) => rec.event_type === 'checkout');
@@ -156,9 +194,11 @@ export const attendanceApi = {
           check_out_time: checkout?.created_at,
         } as AttendanceToday,
       };
-    }),
+    });
+  },
 
   history: (page = 1, perPage = 20) => {
+    if (isDemoMode()) return demoRes(Demo.getDemoHistory(page, perPage));
     const skip = (page - 1) * perPage;
     return api.get<any[]>(`/attendance/history?skip=${skip}&limit=${perPage}`).then(r => {
       const raw: any[] = Array.isArray(r.data) ? r.data : [];
@@ -176,56 +216,108 @@ export const attendanceApi = {
     });
   },
 
-  stats: () => api.get<AttendanceStats>('/attendance/stats'),
-  upcomingShift: () => api.get<UpcomingShift | null>('/attendance/upcoming-shift'),
-  markSafe: (recordId: string, note: string = '') =>
-    api.post<AttendanceRecord>(`/attendance/${recordId}/mark-safe`, { note }),
+  stats: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_STATS);
+    return api.get<AttendanceStats>('/attendance/stats');
+  },
+  upcomingShift: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_UPCOMING_SHIFT);
+    return api.get<UpcomingShift | null>('/attendance/upcoming-shift');
+  },
+  markSafe: (recordId: string, note: string = '') => {
+    if (isDemoMode()) return demoRes({});
+    return api.post<AttendanceRecord>(`/attendance/${recordId}/mark-safe`, { note });
+  },
 };
 
 export const sitesApi = {
-  list: (orgId: string) =>
-    api.get<Site[]>(`/organisations/${orgId}/sites`),
-  get: (orgId: string, siteId: string) =>
-    api.get<Site>(`/organisations/${orgId}/sites/${siteId}`),
-  create: (orgId: string, payload: SiteCreatePayload) =>
-    api.post<Site>(`/organisations/${orgId}/sites`, payload),
-  update: (orgId: string, siteId: string, payload: SiteUpdatePayload) =>
-    api.patch<Site>(`/organisations/${orgId}/sites/${siteId}`, payload),
-  deactivate: (orgId: string, siteId: string) =>
-    api.delete(`/organisations/${orgId}/sites/${siteId}`),
+  list: (orgId: string) => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_SITES);
+    return api.get<Site[]>(`/organisations/${orgId}/sites`);
+  },
+  get: (orgId: string, siteId: string) => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_SITES.find(s => s.id === siteId) ?? Demo.DEMO_SITES[0]);
+    return api.get<Site>(`/organisations/${orgId}/sites/${siteId}`);
+  },
+  create: (orgId: string, payload: SiteCreatePayload) => {
+    if (isDemoMode()) return demoRes({ ...Demo.DEMO_SITES[0], ...payload, id: `demo-site-${Date.now()}` });
+    return api.post<Site>(`/organisations/${orgId}/sites`, payload);
+  },
+  update: (orgId: string, siteId: string, payload: SiteUpdatePayload) => {
+    if (isDemoMode()) return demoRes({ ...Demo.DEMO_SITES[0], ...payload });
+    return api.patch<Site>(`/organisations/${orgId}/sites/${siteId}`, payload);
+  },
+  deactivate: (orgId: string, siteId: string) => {
+    if (isDemoMode()) return demoRes({});
+    return api.delete(`/organisations/${orgId}/sites/${siteId}`);
+  },
 };
 
 export const approvalsApi = {
-  list: () =>
-    api.get<Approval[]>('/approvals/'),
-  get: (id: string) =>
-    api.get<Approval>(`/approvals/${id}`),
-  approve: (approvalId: string, note = '') =>
-    api.post(`/approvals/${approvalId}/approve`, { note }),
-  reject: (approvalId: string, note = '') =>
-    api.post(`/approvals/${approvalId}/reject`, { note }),
-  bulkApprove: (approval_ids: string[], note = 'Bulk approved') =>
-    api.post('/approvals/bulk-approve', { approval_ids, note }),
+  list: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_APPROVALS);
+    return api.get<Approval[]>('/approvals/');
+  },
+  get: (id: string) => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_APPROVALS.find(a => a.id === id) ?? Demo.DEMO_APPROVALS[0]);
+    return api.get<Approval>(`/approvals/${id}`);
+  },
+  approve: (approvalId: string, note = '') => {
+    if (isDemoMode()) return demoRes({ ...Demo.DEMO_APPROVALS[0], status: 'approved' });
+    return api.post(`/approvals/${approvalId}/approve`, { note });
+  },
+  reject: (approvalId: string, note = '') => {
+    if (isDemoMode()) return demoRes({ ...Demo.DEMO_APPROVALS[0], status: 'rejected' });
+    return api.post(`/approvals/${approvalId}/reject`, { note });
+  },
+  bulkApprove: (approval_ids: string[], note = 'Bulk approved') => {
+    if (isDemoMode()) return demoRes({});
+    return api.post('/approvals/bulk-approve', { approval_ids, note });
+  },
 };
 
 export const usersApi = {
-  list: (orgId?: string) =>
-    api.get<{ items: User[]; total: number }>(`/users/?limit=100${orgId ? `&org_id=${orgId}` : ''}`),
-  update: (userId: string, payload: Partial<{ full_name: string; is_active: boolean; role: string }>) =>
-    api.patch<User>(`/users/${userId}`, payload),
-  create: (payload: { email: string; password: string; full_name: string; org_id: string; role: string }) =>
-    api.post<User>('/users/', payload),
-  leaderboard: () => api.get<LeaderboardEntry[]>('/users/leaderboard'),
+  list: (orgId?: string) => {
+    if (isDemoMode()) return demoRes(Demo.getDemoUsers());
+    return api.get<{ items: User[]; total: number }>(`/users/?limit=100${orgId ? `&org_id=${orgId}` : ''}`);
+  },
+  update: (userId: string, payload: Partial<{ full_name: string; is_active: boolean; role: string }>) => {
+    if (isDemoMode()) return demoRes({ ...Demo.DEMO_EMPLOYEE, ...payload });
+    return api.patch<User>(`/users/${userId}`, payload);
+  },
+  create: (payload: { email: string; password: string; full_name: string; org_id: string; role: string }) => {
+    if (isDemoMode()) return demoRes({ ...Demo.DEMO_EMPLOYEE, ...payload, id: `demo-user-${Date.now()}` });
+    return api.post<User>('/users/', payload);
+  },
+  leaderboard: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_LEADERBOARD);
+    return api.get<LeaderboardEntry[]>('/users/leaderboard');
+  },
 };
 
 export const manualCheckinApi = {
-  submit: (payload: ManualCheckinPayload) =>
-    api.post('/attendance/manual', payload),
+  submit: (payload: ManualCheckinPayload) => {
+    if (isDemoMode()) return demoRes(Demo.getDemoCheckinResponse());
+    return api.post('/attendance/manual', payload);
+  },
 };
 
 export const analyticsApi = {
-  summary: () =>
-    api.get<any>('/analytics/summary').then(r => {
+  summary: () => {
+    if (isDemoMode()) {
+      const d = Demo.DEMO_ANALYTICS_SUMMARY;
+      return demoRes({
+        present_today: d.present_today,
+        late_today: d.late_today,
+        absent_today: d.absent_today,
+        pending_approvals: d.pending_approvals,
+        total_employees: d.total_employees,
+        attendance_rate: d.attendance_rate,
+        anomaly_count: d.anomaly_count,
+        date: d.date,
+      } as AnalyticsSummary);
+    }
+    return api.get<any>('/analytics/summary').then(r => {
       const d = r.data ?? {};
       const total = d.total_employees || 1;
       const present = d.total_present ?? 0;
@@ -244,21 +336,49 @@ export const analyticsApi = {
           date: d.date ?? new Date().toISOString().split('T')[0],
         } as AnalyticsSummary,
       };
-    }),
-  employeeStats: (userId: string) =>
-    api.get<AttendanceStats>(`/analytics/employee/${userId}`),
-  heatmap: () => api.get('/analytics/heatmap'),
-  trends: () => api.get('/analytics/trends'),
-  anomalies: (minScore = 0.3) => api.get(`/analytics/anomalies?min_score=${minScore}`),
-  attendanceToday: () => api.get<any[]>('/analytics/attendance-today'),
-  export: (startDate: string, endDate: string, reportType = 'daily') =>
-    api.post(`/analytics/export?start_date=${startDate}&end_date=${endDate}&report_type=${reportType}`),
-  exportStatus: (taskId: string) =>
-    api.get<{ status: string; download_url?: string }>(`/analytics/export/${taskId}`),
+    });
+  },
+  employeeStats: (userId: string) => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_STATS);
+    return api.get<AttendanceStats>(`/analytics/employee/${userId}`);
+  },
+  heatmap: () => {
+    if (isDemoMode()) return demoRes({ points: [], max_count: 0, generated_at: new Date().toISOString() });
+    return api.get('/analytics/heatmap');
+  },
+  trends: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_TRENDS);
+    return api.get('/analytics/trends');
+  },
+  anomalies: (minScore = 0.3) => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_ANOMALIES);
+    return api.get(`/analytics/anomalies?min_score=${minScore}`);
+  },
+  attendanceToday: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_ROSTER);
+    return api.get<any[]>('/analytics/attendance-today');
+  },
+  export: (startDate: string, endDate: string, reportType = 'daily') => {
+    if (isDemoMode()) return demoRes({ task_id: 'demo-task-001', status: 'completed' });
+    return api.post(`/analytics/export?start_date=${startDate}&end_date=${endDate}&report_type=${reportType}`);
+  },
+  exportStatus: (taskId: string) => {
+    if (isDemoMode()) return demoRes({ status: 'completed', download_url: undefined });
+    return api.get<{ status: string; download_url?: string }>(`/analytics/export/${taskId}`);
+  },
 };
 
 export const notificationsApi = {
-  list: () => api.get<NotificationListResponse>('/notifications/'),
-  markRead: (id: string) => api.post(`/notifications/${id}/read`),
-  markAllRead: () => api.post('/notifications/read-all'),
+  list: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_NOTIFICATIONS);
+    return api.get<NotificationListResponse>('/notifications/');
+  },
+  markRead: (id: string) => {
+    if (isDemoMode()) return demoRes({});
+    return api.post(`/notifications/${id}/read`);
+  },
+  markAllRead: () => {
+    if (isDemoMode()) return demoRes({});
+    return api.post('/notifications/read-all');
+  },
 };

@@ -58,16 +58,16 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF7ED',
+    backgroundColor: 'rgba(249,115,22,0.10)',
     borderRadius: 16,
     padding: 14,
     gap: 10,
     borderWidth: 1,
-    borderColor: '#FED7AA',
+    borderColor: 'rgba(249,115,22,0.20)',
   },
   legendary: {
-    backgroundColor: '#FEF9C3',
-    borderColor: '#FDE047',
+    backgroundColor: 'rgba(245,158,11,0.12)',
+    borderColor: 'rgba(245,158,11,0.30)',
     shadowColor: '#F59E0B',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.4,
@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
   count: {
     fontSize: 22,
     fontWeight: '900',
-    color: '#EA580C',
+    color: '#FB923C',
     lineHeight: 26,
   },
   countSmall: {
@@ -99,11 +99,11 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   countLegendary: {
-    color: '#D97706',
+    color: '#FBBF24',
   },
   label: {
     fontSize: 12,
-    color: '#9A3412',
+    color: '#FDA472',
     fontWeight: '500',
   },
   labelSmall: {

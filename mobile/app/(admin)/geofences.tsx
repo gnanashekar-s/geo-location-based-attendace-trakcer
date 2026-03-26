@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   StyleSheet,
@@ -11,46 +11,95 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  StatusBar,
+  Animated,
 } from 'react-native';
-import { Text, Surface, Button, TextInput as PaperInput } from 'react-native-paper';
+import { Text, TextInput as PaperInput } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { sitesApi } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 import type { Site } from '@/types';
+import { useGeofenceRadiusSuggestion } from '@/api/analytics';
+
+// ─── Design tokens ────────────────────────────────────────────────────────────
+const C = {
+  bg: '#09090B', surface: '#18181B', surface2: '#27272A',
+  border: 'rgba(255,255,255,0.06)', borderStrong: 'rgba(255,255,255,0.12)',
+  primary: '#6366F1', primaryDark: '#4F46E5', accent: '#8B5CF6',
+  success: '#22C55E', successLight: 'rgba(34,197,94,0.10)',
+  warning: '#F59E0B', warningLight: 'rgba(245,158,11,0.10)',
+  danger: '#EF4444', dangerLight: 'rgba(239,68,68,0.10)',
+  purple: '#A855F7', purpleLight: 'rgba(168,85,247,0.10)',
+  teal: '#14B8A6', tealLight: 'rgba(20,184,166,0.10)',
+  textPrimary: '#FAFAFA', textSecondary: '#A1A1AA', textMuted: '#71717A',
+};
+
+// ─── Map thumbnail placeholder ────────────────────────────────────────────────
+
+function MapThumb({ site }: { site: Site }) {
+  return (
+    <View style={styles.mapThumb}>
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: C.surface2, borderRadius: 12 }]} />
+      {/* Grid lines for map feel */}
+      <View style={styles.mapGrid}>
+        {[0, 1, 2].map(i => (
+          <View key={`h${i}`} style={[styles.mapGridLine, styles.mapGridH, { top: `${30 + i * 18}%` as any }]} />
+        ))}
+        {[0, 1, 2].map(i => (
+          <View key={`v${i}`} style={[styles.mapGridLine, styles.mapGridV, { left: `${20 + i * 25}%` as any }]} />
+        ))}
+      </View>
+      {/* Radius circle hint */}
+      <View style={[styles.mapCircle, { opacity: site.is_active ? 0.3 : 0.12 }]} />
+      <MaterialCommunityIcons
+        name="map-marker"
+        size={24}
+        color={site.is_active ? C.teal : C.textMuted}
+      />
+    </View>
+  );
+}
 
 // ─── Site Card ────────────────────────────────────────────────────────────────
 
 function SiteCard({ site, onEdit }: { site: Site; onEdit: () => void }) {
+  const scaleAnim = React.useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () =>
+    Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, speed: 30 }).start();
+  const handlePressOut = () =>
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, speed: 30 }).start();
+
   return (
-    <Pressable onPress={onEdit}>
-      <Surface style={styles.card} elevation={1}>
-        <View style={[styles.cardAccent, { backgroundColor: site.is_active ? '#10B981' : '#94A3B8' }]} />
+    <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut} onPress={onEdit}>
+      <Animated.View style={[styles.card, { transform: [{ scale: scaleAnim }] }]}>
+        {/* Left: map placeholder */}
+        <MapThumb site={site} />
+
+        {/* Center: info */}
         <View style={styles.cardBody}>
-          <View style={styles.cardTop}>
-            <Text style={styles.siteName}>{site.name}</Text>
-            <View style={[styles.statusBadge, { backgroundColor: site.is_active ? '#D1FAE5' : '#F1F5F9' }]}>
-              <Text style={[styles.statusText, { color: site.is_active ? '#059669' : '#94A3B8' }]}>
-                {site.is_active ? 'Active' : 'Inactive'}
-              </Text>
-            </View>
-          </View>
+          <Text style={styles.siteName} numberOfLines={1}>{site.name}</Text>
           <View style={styles.cardMeta}>
-            <MaterialCommunityIcons name="map-marker-outline" size={13} color="#94A3B8" />
-            <Text style={styles.siteAddress} numberOfLines={1}>{site.address || 'No address'}</Text>
+            <MaterialCommunityIcons name="map-marker-outline" size={12} color={C.textMuted} />
+            <Text style={styles.siteAddress} numberOfLines={1}>{site.address || 'No address set'}</Text>
           </View>
-          <View style={styles.cardMeta}>
-            <MaterialCommunityIcons name="target" size={13} color="#4F46E5" />
-            <Text style={styles.siteRadius}>Radius: {site.radius_meters}m</Text>
-            <MaterialCommunityIcons name="crosshairs-gps" size={13} color="#94A3B8" style={{ marginLeft: 12 }} />
-            <Text style={styles.siteCoords}>
-              {site.center_lat?.toFixed(4)}, {site.center_lng?.toFixed(4)}
-            </Text>
+          <View style={styles.radiusBadge}>
+            <MaterialCommunityIcons name="target" size={11} color={C.teal} />
+            <Text style={styles.radiusText}>{site.radius_meters}m</Text>
           </View>
         </View>
-        <MaterialCommunityIcons name="chevron-right" size={20} color="#CBD5E1" />
-      </Surface>
+
+        {/* Right: status dot + edit */}
+        <View style={styles.cardRight}>
+          <View style={[styles.statusDot, { backgroundColor: site.is_active ? C.success : C.textMuted }]} />
+          <Pressable onPress={onEdit} style={styles.editBtn} hitSlop={8}>
+            <MaterialCommunityIcons name="pencil" size={17} color={C.textMuted} />
+          </Pressable>
+        </View>
+      </Animated.View>
     </Pressable>
   );
 }
@@ -74,6 +123,14 @@ function SiteFormModal({ visible, onClose, editingSite, orgId }: SiteFormModalPr
   const [lng, setLng] = useState(editingSite?.center_lng?.toString() ?? '');
   const [radius, setRadius] = useState(editingSite?.radius_meters?.toString() ?? '100');
 
+  const {
+    data: radiusSuggestion,
+    isLoading: suggestionLoading,
+    error: suggestionError,
+  } = useGeofenceRadiusSuggestion(editingSite?.id ?? null);
+
+  const [usedSuggestion, setUsedSuggestion] = useState(false);
+
   React.useEffect(() => {
     if (visible) {
       setName(editingSite?.name ?? '');
@@ -83,6 +140,10 @@ function SiteFormModal({ visible, onClose, editingSite, orgId }: SiteFormModalPr
       setRadius(editingSite?.radius_meters?.toString() ?? '100');
     }
   }, [visible, editingSite]);
+
+  useEffect(() => {
+    setUsedSuggestion(false);
+  }, [editingSite]);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -133,27 +194,74 @@ function SiteFormModal({ visible, onClose, editingSite, orgId }: SiteFormModalPr
     const latNum = parseFloat(lat);
     const lngNum = parseFloat(lng);
     const radNum = parseInt(radius, 10);
-    if (isNaN(latNum) || latNum < -90 || latNum > 90) return Alert.alert('Validation', 'Enter a valid latitude (-90 to 90).');
-    if (isNaN(lngNum) || lngNum < -180 || lngNum > 180) return Alert.alert('Validation', 'Enter a valid longitude (-180 to 180).');
-    if (isNaN(radNum) || radNum < 10) return Alert.alert('Validation', 'Radius must be at least 10 metres.');
+    if (isNaN(latNum) || latNum < -90 || latNum > 90)
+      return Alert.alert('Validation', 'Enter a valid latitude (-90 to 90).');
+    if (isNaN(lngNum) || lngNum < -180 || lngNum > 180)
+      return Alert.alert('Validation', 'Enter a valid longitude (-180 to 180).');
+    if (isNaN(radNum) || radNum < 10)
+      return Alert.alert('Validation', 'Radius must be at least 10 metres.');
     isEditing ? updateMutation.mutate() : createMutation.mutate();
   };
 
   const isLoading = createMutation.isPending || updateMutation.isPending;
 
+  const confColor = (c?: string) =>
+    c === 'high' ? C.success : c === 'medium' ? C.warning : C.danger;
+
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={styles.modal}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <ScrollView contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            contentContainerStyle={styles.modalContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Drag handle */}
+            <View style={styles.dragHandle} />
+
             {/* Modal header */}
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{isEditing ? 'Edit Site' : 'Add New Site'}</Text>
+              <View>
+                <Text style={styles.modalTitle}>
+                  {isEditing ? 'Edit Site' : 'Add New Site'}
+                </Text>
+                <Text style={styles.modalSubtitle}>
+                  {isEditing ? 'Update geofence configuration' : 'Configure a new check-in zone'}
+                </Text>
+              </View>
               <Pressable onPress={onClose} style={styles.closeBtn}>
-                <MaterialCommunityIcons name="close" size={22} color="#64748B" />
+                <MaterialCommunityIcons name="close" size={20} color={C.textSecondary} />
               </Pressable>
             </View>
 
+            {/* Map placeholder (200px height, dark-styled) */}
+            <View style={styles.modalMapBox}>
+              <LinearGradient
+                colors={['#1E3A5F', '#0F2744']}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.mapGridOverlay}>
+                {[0, 1, 2, 3].map(i => (
+                  <View key={`mh${i}`} style={[styles.mapGridLine, styles.mapGridH, { top: `${15 + i * 20}%` as any }]} />
+                ))}
+                {[0, 1, 2, 3, 4].map(i => (
+                  <View key={`mv${i}`} style={[styles.mapGridLine, styles.mapGridV, { left: `${10 + i * 20}%` as any }]} />
+                ))}
+              </View>
+              <View style={styles.modalMapCircle} />
+              <View style={styles.modalMapPinWrapper}>
+                <MaterialCommunityIcons name="map-marker" size={36} color={C.primary} />
+              </View>
+              <View style={styles.modalMapHint}>
+                <MaterialCommunityIcons name="information-outline" size={13} color={C.textSecondary} />
+                <Text style={styles.modalMapHintText}>
+                  Enter GPS coordinates below. Open Google Maps, long-press your office and copy the coordinates.
+                </Text>
+              </View>
+            </View>
+
+            {/* Fields */}
             <Text style={styles.fieldLabel}>Site Name *</Text>
             <PaperInput
               value={name}
@@ -161,9 +269,12 @@ function SiteFormModal({ visible, onClose, editingSite, orgId }: SiteFormModalPr
               placeholder="e.g. Main Office"
               mode="outlined"
               style={styles.input}
-              outlineColor="#E2E8F0"
-              activeOutlineColor="#4F46E5"
-              left={<PaperInput.Icon icon="office-building-outline" />}
+              outlineColor={C.border}
+              activeOutlineColor={C.primary}
+              placeholderTextColor={C.textMuted}
+              textColor={C.textPrimary}
+              left={<PaperInput.Icon icon="office-building-outline" color={C.textSecondary} />}
+              theme={{ colors: { background: C.surface2 } }}
               disabled={isLoading}
             />
 
@@ -174,9 +285,12 @@ function SiteFormModal({ visible, onClose, editingSite, orgId }: SiteFormModalPr
               placeholder="e.g. 123 Tech Park, Kuala Lumpur"
               mode="outlined"
               style={styles.input}
-              outlineColor="#E2E8F0"
-              activeOutlineColor="#4F46E5"
-              left={<PaperInput.Icon icon="map-marker-outline" />}
+              outlineColor={C.border}
+              activeOutlineColor={C.primary}
+              placeholderTextColor={C.textMuted}
+              textColor={C.textPrimary}
+              left={<PaperInput.Icon icon="map-marker-outline" color={C.textSecondary} />}
+              theme={{ colors: { background: C.surface2 } }}
               disabled={isLoading}
             />
 
@@ -188,10 +302,13 @@ function SiteFormModal({ visible, onClose, editingSite, orgId }: SiteFormModalPr
                 placeholder="Latitude"
                 mode="outlined"
                 style={[styles.input, { flex: 1 }]}
-                outlineColor="#E2E8F0"
-                activeOutlineColor="#4F46E5"
+                outlineColor={C.border}
+                activeOutlineColor={C.primary}
+                placeholderTextColor={C.textMuted}
+                textColor={C.textPrimary}
                 keyboardType="numeric"
-                left={<PaperInput.Icon icon="latitude" />}
+                left={<PaperInput.Icon icon="latitude" color={C.textSecondary} />}
+                theme={{ colors: { background: C.surface2 } }}
                 disabled={isLoading}
               />
               <View style={{ width: 10 }} />
@@ -201,19 +318,15 @@ function SiteFormModal({ visible, onClose, editingSite, orgId }: SiteFormModalPr
                 placeholder="Longitude"
                 mode="outlined"
                 style={[styles.input, { flex: 1 }]}
-                outlineColor="#E2E8F0"
-                activeOutlineColor="#4F46E5"
+                outlineColor={C.border}
+                activeOutlineColor={C.primary}
+                placeholderTextColor={C.textMuted}
+                textColor={C.textPrimary}
                 keyboardType="numeric"
-                left={<PaperInput.Icon icon="longitude" />}
+                left={<PaperInput.Icon icon="longitude" color={C.textSecondary} />}
+                theme={{ colors: { background: C.surface2 } }}
                 disabled={isLoading}
               />
-            </View>
-
-            <View style={styles.hintBox}>
-              <MaterialCommunityIcons name="information-outline" size={14} color="#4F46E5" />
-              <Text style={styles.hintText}>
-                Open Google Maps, long-press your office location and copy the coordinates shown at the top.
-              </Text>
             </View>
 
             <Text style={styles.fieldLabel}>Check-in Radius (metres) *</Text>
@@ -222,43 +335,126 @@ function SiteFormModal({ visible, onClose, editingSite, orgId }: SiteFormModalPr
               onChangeText={setRadius}
               mode="outlined"
               style={styles.input}
-              outlineColor="#E2E8F0"
-              activeOutlineColor="#4F46E5"
+              outlineColor={C.border}
+              activeOutlineColor={C.primary}
+              placeholderTextColor={C.textMuted}
+              textColor={C.textPrimary}
               keyboardType="numeric"
-              left={<PaperInput.Icon icon="target" />}
+              left={<PaperInput.Icon icon="target" color={C.textSecondary} />}
+              theme={{ colors: { background: C.surface2 } }}
               disabled={isLoading}
             />
             <Text style={styles.subHint}>Recommended: 50–200m. Larger radius = more lenient check-ins.</Text>
 
-            <Button
-              mode="contained"
-              onPress={handleSubmit}
-              loading={isLoading}
-              disabled={isLoading}
-              style={styles.submitBtn}
-              buttonColor="#4F46E5"
-              contentStyle={{ paddingVertical: 4 }}
-              labelStyle={{ fontSize: 15, fontWeight: '700' }}
-            >
-              {isEditing ? 'Save Changes' : 'Create Site'}
-            </Button>
+            {/* AI Suggestion card */}
+            {editingSite?.id && suggestionLoading && (
+              <View style={styles.suggestionLoading}>
+                <ActivityIndicator size="small" color={C.primary} />
+                <Text style={styles.suggestionLoadingText}>Analysing check-in data…</Text>
+              </View>
+            )}
+            {editingSite?.id && !suggestionLoading && !suggestionError && radiusSuggestion && (
+              <View style={styles.suggestionCard}>
+                <View style={styles.suggestionTopRow}>
+                  <View style={styles.suggestionIconBox}>
+                    <MaterialCommunityIcons name="robot" size={16} color={C.success} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.suggestionLabel}>AI Suggested</Text>
+                    <Text style={styles.suggestionValue}>
+                      {Math.round(radiusSuggestion.suggested_radius_meters)}m
+                      {'  '}
+                      <Text style={[styles.confBadge, { color: confColor(radiusSuggestion.confidence) }]}>
+                        {radiusSuggestion.confidence} confidence
+                      </Text>
+                    </Text>
+                  </View>
+                  {radiusSuggestion.sample_count > 0 && (
+                    <Pressable
+                      onPress={() => {
+                        setRadius(String(Math.round(radiusSuggestion.suggested_radius_meters)));
+                        setUsedSuggestion(true);
+                      }}
+                      style={styles.useSuggestedBtn}
+                    >
+                      <Text style={styles.useSuggestedText}>
+                        {usedSuggestion ? 'Applied ✓' : 'Apply'}
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+                {radiusSuggestion.sample_count === 0 ? (
+                  <Text style={styles.suggestionMuted}>Insufficient check-in data for a suggestion</Text>
+                ) : (
+                  <Text style={styles.suggestionMuted}>
+                    Based on {radiusSuggestion.sample_count} check-ins at this site
+                  </Text>
+                )}
+              </View>
+            )}
 
-            {isEditing && editingSite?.is_active && (
-              <Button
-                mode="outlined"
-                onPress={() =>
-                  Alert.alert('Deactivate Site', 'This will prevent check-ins at this location. Continue?', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Deactivate', style: 'destructive', onPress: () => deactivateMutation.mutate() },
-                  ])
-                }
-                loading={deactivateMutation.isPending}
-                style={[styles.submitBtn, { borderColor: '#EF4444' }]}
-                textColor="#EF4444"
-                icon="map-marker-off-outline"
+            {/* Save button */}
+            <Pressable
+              onPress={handleSubmit}
+              disabled={isLoading}
+              style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1, marginTop: 20 }]}
+            >
+              <LinearGradient
+                colors={['#6366F1', '#8B5CF6']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.saveBtn}
               >
-                Deactivate Site
-              </Button>
+                {isLoading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons
+                      name={isEditing ? 'content-save-outline' : 'map-marker-plus-outline'}
+                      size={18}
+                      color="#FFFFFF"
+                    />
+                    <Text style={styles.saveBtnText}>
+                      {isEditing ? 'Save Changes' : 'Create Site'}
+                    </Text>
+                  </>
+                )}
+              </LinearGradient>
+            </Pressable>
+
+            {/* Cancel button */}
+            <Pressable
+              onPress={onClose}
+              style={({ pressed }) => [styles.cancelBtn, { opacity: pressed ? 0.7 : 1 }]}
+            >
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </Pressable>
+
+            {/* Deactivate */}
+            {isEditing && editingSite?.is_active && (
+              <Pressable
+                onPress={() =>
+                  Alert.alert(
+                    'Deactivate Site',
+                    'This will prevent check-ins at this location. Continue?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Deactivate', style: 'destructive', onPress: () => deactivateMutation.mutate() },
+                    ],
+                  )
+                }
+                disabled={deactivateMutation.isPending}
+                style={styles.deactivateBtn}
+              >
+                {deactivateMutation.isPending ? (
+                  <ActivityIndicator size="small" color={C.danger} />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="map-marker-off-outline" size={16} color={C.danger} />
+                    <Text style={styles.deactivateBtnText}>Deactivate Site</Text>
+                  </>
+                )}
+              </Pressable>
             )}
           </ScrollView>
         </KeyboardAvoidingView>
@@ -288,15 +484,51 @@ export default function GeofencesScreen() {
     setRefreshing(false);
   }, [refetch]);
 
+  const activeSites = (sites ?? []).filter(s => s.is_active).length;
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Geofences</Text>
-        <Text style={styles.subtitle}>{sites?.length ?? 0} site{sites?.length !== 1 ? 's' : ''} registered</Text>
-      </View>
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+
+      {/* Header */}
+      <LinearGradient colors={['#1E293B', '#0F172A']} style={styles.header}>
+        <View>
+          <Text style={styles.title}>Geofences</Text>
+          <View style={styles.headerBadgeRow}>
+            <View style={styles.countBadge}>
+              <Text style={styles.countBadgeText}>
+                {sites?.length ?? 0} site{(sites?.length ?? 0) !== 1 ? 's' : ''}
+              </Text>
+            </View>
+            {activeSites > 0 && (
+              <View style={styles.activeBadge}>
+                <View style={styles.activeDot} />
+                <Text style={styles.activeBadgeText}>{activeSites} active</Text>
+              </View>
+            )}
+          </View>
+        </View>
+        {/* Header FAB */}
+        <Pressable
+          style={styles.headerFab}
+          onPress={() => { setEditingSite(null); setShowForm(true); }}
+        >
+          <LinearGradient
+            colors={['#6366F1', '#8B5CF6']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.headerFabGradient}
+          >
+            <MaterialCommunityIcons name="plus" size={22} color="#FFFFFF" />
+          </LinearGradient>
+        </Pressable>
+      </LinearGradient>
 
       {isLoading ? (
-        <ActivityIndicator color="#4F46E5" style={{ marginTop: 40 }} />
+        <View style={styles.loadingBox}>
+          <ActivityIndicator color={C.primary} size="large" />
+          <Text style={styles.loadingText}>Loading sites…</Text>
+        </View>
       ) : (
         <FlatList
           data={sites ?? []}
@@ -308,22 +540,56 @@ export default function GeofencesScreen() {
             />
           )}
           contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#4F46E5']} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[C.primary]}
+              tintColor={C.primary}
+              progressBackgroundColor={C.surface}
+            />
+          }
           ListEmptyComponent={
             <View style={styles.empty}>
-              <MaterialCommunityIcons name="map-marker-plus-outline" size={56} color="#CBD5E1" />
-              <Text style={styles.emptyTitle}>No Sites Yet</Text>
+              <View style={styles.emptyIconBox}>
+                <MaterialCommunityIcons name="map-marker-off" size={40} color={C.textMuted} />
+              </View>
+              <Text style={styles.emptyTitle}>No geofences configured</Text>
               <Text style={styles.emptySubtitle}>
-                Add your first office location so employees can check in.
+                Add your first site so employees can check in from a verified location.
               </Text>
+              <Pressable
+                style={styles.emptyBtn}
+                onPress={() => { setEditingSite(null); setShowForm(true); }}
+              >
+                <LinearGradient
+                  colors={['#6366F1', '#8B5CF6']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.emptyBtnGradient}
+                >
+                  <MaterialCommunityIcons name="map-marker-plus" size={16} color="#FFFFFF" />
+                  <Text style={styles.emptyBtnText}>Add Site</Text>
+                </LinearGradient>
+              </Pressable>
             </View>
           }
         />
       )}
 
-      <Pressable style={styles.fab} onPress={() => { setEditingSite(null); setShowForm(true); }}>
-        <MaterialCommunityIcons name="plus" size={20} color="#FFFFFF" />
-        <Text style={styles.fabLabel}>Add Site</Text>
+      {/* FAB — bottom right */}
+      <Pressable
+        style={styles.fab}
+        onPress={() => { setEditingSite(null); setShowForm(true); }}
+      >
+        <LinearGradient
+          colors={['#6366F1', '#8B5CF6']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.fabGradient}
+        >
+          <MaterialCommunityIcons name="map-marker-plus" size={26} color="#FFFFFF" />
+        </LinearGradient>
       </Pressable>
 
       <SiteFormModal
@@ -339,42 +605,290 @@ export default function GeofencesScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
-  title: { fontSize: 22, fontWeight: '800', color: '#1E293B' },
-  subtitle: { fontSize: 13, color: '#94A3B8', marginTop: 2 },
-  list: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 100, gap: 10 },
-  card: {
-    borderRadius: 14, backgroundColor: '#FFFFFF',
-    flexDirection: 'row', alignItems: 'center',
-    overflow: 'hidden', paddingRight: 12,
+  container: { flex: 1, backgroundColor: C.bg },
+
+  // Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
   },
-  cardAccent: { width: 4, alignSelf: 'stretch' },
-  cardBody: { flex: 1, padding: 12, gap: 4 },
-  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  siteName: { fontSize: 15, fontWeight: '700', color: '#1E293B', flex: 1 },
-  statusBadge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  statusText: { fontSize: 11, fontWeight: '700' },
+  title: { fontSize: 24, fontWeight: '800', color: C.textPrimary },
+  headerBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+  countBadge: {
+    backgroundColor: C.surface2,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 20,
+  },
+  countBadgeText: { fontSize: 11, fontWeight: '600', color: C.textSecondary },
+  activeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(16,185,129,0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 20,
+  },
+  activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.success },
+  activeBadgeText: { fontSize: 11, fontWeight: '600', color: C.success },
+  headerFab: {
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  headerFabGradient: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  // Loading
+  loadingBox: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingText: { color: C.textSecondary, fontSize: 14 },
+
+  // List
+  list: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 110, gap: 10 },
+
+  // Site card
+  card: {
+    backgroundColor: C.surface,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 12,
+    gap: 12,
+    marginBottom: 0,
+  },
+  mapThumb: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    flexShrink: 0,
+  },
+  mapGrid: { ...StyleSheet.absoluteFillObject },
+  mapGridLine: { position: 'absolute', backgroundColor: 'rgba(148,163,184,0.1)' },
+  mapGridH: { left: 0, right: 0, height: 1 },
+  mapGridV: { top: 0, bottom: 0, width: 1 },
+  mapCircle: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: C.teal,
+    backgroundColor: 'rgba(20,184,166,0.08)',
+  },
+  cardBody: { flex: 1, gap: 4 },
+  siteName: { fontSize: 15, fontWeight: '700', color: C.textPrimary },
   cardMeta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  siteAddress: { fontSize: 12, color: '#64748B', flex: 1 },
-  siteRadius: { fontSize: 12, color: '#4F46E5', fontWeight: '600' },
-  siteCoords: { fontSize: 11, color: '#94A3B8' },
-  empty: { alignItems: 'center', paddingTop: 80, gap: 10, paddingHorizontal: 32 },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1E293B' },
-  emptySubtitle: { fontSize: 13, color: '#94A3B8', textAlign: 'center', lineHeight: 20 },
-  fab: { position: 'absolute', right: 16, bottom: 16, backgroundColor: '#4F46E5', borderRadius: 28, flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 20, gap: 8, shadowColor: '#4F46E5', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 },
-  fabLabel: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  siteAddress: { fontSize: 12, color: C.textMuted, flex: 1 },
+  radiusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(20,184,166,0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+    alignSelf: 'flex-start',
+  },
+  radiusText: { fontSize: 11, fontWeight: '700', color: C.teal },
+  cardRight: {
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingLeft: 4,
+  },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  editBtn: {
+    width: 32, height: 32, borderRadius: 8,
+    backgroundColor: C.surface2,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  // Empty state
+  empty: { alignItems: 'center', paddingTop: 80, gap: 12, paddingHorizontal: 32 },
+  emptyIconBox: {
+    width: 80, height: 80, borderRadius: 40,
+    backgroundColor: C.surface,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: C.border,
+    marginBottom: 4,
+  },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: C.textPrimary },
+  emptySubtitle: { fontSize: 13, color: C.textSecondary, textAlign: 'center', lineHeight: 20 },
+  emptyBtn: {
+    marginTop: 8, borderRadius: 14, overflow: 'hidden',
+    shadowColor: C.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 8, elevation: 6,
+  },
+  emptyBtnGradient: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 13, paddingHorizontal: 28,
+  },
+  emptyBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+
+  // FAB
+  fab: {
+    position: 'absolute',
+    bottom: 28,
+    right: 20,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    elevation: 12,
+  },
+  fabGradient: {
+    width: 56, height: 56, borderRadius: 28,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
   // Modal
-  modal: { flex: 1, backgroundColor: '#F8FAFC' },
-  modalContent: { padding: 20, gap: 4, paddingBottom: 40 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  modalTitle: { fontSize: 20, fontWeight: '800', color: '#1E293B' },
-  closeBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
-  fieldLabel: { fontSize: 12, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.6, marginTop: 12, marginBottom: 4 },
-  input: { backgroundColor: '#FFFFFF', marginBottom: 2 },
+  modal: { flex: 1, backgroundColor: C.bg },
+  modalContent: { padding: 20, gap: 4, paddingBottom: 48 },
+  dragHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: C.surface2,
+    alignSelf: 'center', marginBottom: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'flex-start', marginBottom: 16,
+  },
+  modalTitle: { fontSize: 22, fontWeight: '800', color: C.textPrimary },
+  modalSubtitle: { fontSize: 13, color: C.textSecondary, marginTop: 2 },
+  closeBtn: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: C.surface,
+    borderWidth: 1, borderColor: C.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  // Modal map box (200px dark-styled)
+  modalMapBox: {
+    height: 200,
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginBottom: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  mapGridOverlay: { ...StyleSheet.absoluteFillObject },
+  modalMapCircle: {
+    position: 'absolute',
+    width: 80, height: 80, borderRadius: 40,
+    borderWidth: 2, borderColor: C.primary,
+    backgroundColor: 'rgba(99,102,241,0.1)',
+  },
+  modalMapPinWrapper: { alignItems: 'center', justifyContent: 'center' },
+  modalMapHint: {
+    position: 'absolute',
+    bottom: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    padding: 10,
+    backgroundColor: 'rgba(15,23,42,0.78)',
+  },
+  modalMapHintText: { flex: 1, fontSize: 11, color: C.textSecondary, lineHeight: 16 },
+
+  // Form fields
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginTop: 14,
+    marginBottom: 4,
+  },
+  input: { backgroundColor: C.surface2, marginBottom: 2 },
   row: { flexDirection: 'row' },
-  hintBox: { flexDirection: 'row', gap: 8, backgroundColor: '#EEF2FF', borderRadius: 10, padding: 12, marginVertical: 6, alignItems: 'flex-start' },
-  hintText: { flex: 1, fontSize: 12, color: '#4338CA', lineHeight: 18 },
-  subHint: { fontSize: 11, color: '#94A3B8', marginTop: 2, marginBottom: 4 },
-  submitBtn: { borderRadius: 12, marginTop: 16 },
+  subHint: { fontSize: 11, color: C.textMuted, marginTop: 2, marginBottom: 4 },
+
+  // Suggestion card
+  suggestionLoading: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12 },
+  suggestionLoadingText: { color: C.textSecondary, fontSize: 13 },
+  suggestionCard: {
+    backgroundColor: C.surface,
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: C.teal,
+    gap: 6,
+  },
+  suggestionTopRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  suggestionIconBox: {
+    width: 32, height: 32, borderRadius: 8,
+    backgroundColor: 'rgba(16,185,129,0.12)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  suggestionLabel: {
+    fontSize: 11, color: C.textMuted, fontWeight: '600',
+    textTransform: 'uppercase', letterSpacing: 0.6,
+  },
+  suggestionValue: { fontSize: 15, fontWeight: '700', color: C.textPrimary, marginTop: 1 },
+  confBadge: { fontSize: 12, fontWeight: '600' },
+  useSuggestedBtn: {
+    backgroundColor: C.primary,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  useSuggestedText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  suggestionMuted: { fontSize: 11, color: C.textMuted },
+
+  // Save button
+  saveBtn: {
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 15,
+  },
+  saveBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+
+  // Cancel button
+  cancelBtn: {
+    marginTop: 10,
+    paddingVertical: 13,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  cancelBtnText: { color: C.textMuted, fontSize: 14, fontWeight: '600' },
+
+  // Deactivate button
+  deactivateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 13,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.35)',
+    backgroundColor: 'rgba(239,68,68,0.06)',
+  },
+  deactivateBtnText: { color: C.danger, fontSize: 14, fontWeight: '600' },
 });

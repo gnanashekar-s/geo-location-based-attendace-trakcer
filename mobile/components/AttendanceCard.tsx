@@ -116,7 +116,7 @@ export const AttendanceCard: React.FC<AttendanceCardProps> = ({
           <MaterialCommunityIcons
             name="chevron-right"
             size={18}
-            color="#9CA3AF"
+            color="#52525B"
             style={styles.chevron}
           />
         )}
@@ -131,15 +131,12 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#18181B',
     borderRadius: 12,
     marginVertical: 6,
     marginHorizontal: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
     overflow: 'hidden',
   },
   accent: {
@@ -167,7 +164,7 @@ const styles = StyleSheet.create({
   eventLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111827',
+    color: '#FAFAFA',
   },
   statusPill: {
     fontSize: 11,
@@ -177,23 +174,23 @@ const styles = StyleSheet.create({
   time: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#1F2937',
+    color: '#FAFAFA',
     marginTop: 2,
   },
   date: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#71717A',
     marginTop: 1,
   },
   duration: {
     fontSize: 12,
-    color: '#374151',
+    color: '#A1A1AA',
     marginTop: 4,
     fontWeight: '500',
   },
   notes: {
     fontSize: 12,
-    color: '#9CA3AF',
+    color: '#52525B',
     marginTop: 4,
     fontStyle: 'italic',
   },

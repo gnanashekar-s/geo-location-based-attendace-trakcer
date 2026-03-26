@@ -32,30 +32,48 @@ const RISK_CONFIG: Record<
   { color: string; bg: string; label: string; icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'] }
 > = {
   low: {
-    color: '#16A34A',
-    bg: '#DCFCE7',
+    color: '#22C55E',
+    bg: 'rgba(34,197,94,0.12)',
     label: 'Low Risk',
     icon: 'shield-check',
   },
   medium: {
-    color: '#D97706',
-    bg: '#FEF3C7',
+    color: '#F59E0B',
+    bg: 'rgba(245,158,11,0.12)',
     label: 'Medium Risk',
     icon: 'shield-alert',
   },
   high: {
-    color: '#DC2626',
-    bg: '#FEE2E2',
+    color: '#EF4444',
+    bg: 'rgba(239,68,68,0.12)',
     label: 'High Risk',
     icon: 'shield-off',
   },
 };
 
 function formatFlagLabel(flag: string): string {
-  return flag
+  const base = flag.split(':')[0];
+  return base
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
+
+const FLAG_ICON_MAP: Partial<Record<string, React.ComponentProps<typeof MaterialCommunityIcons>['name']>> = {
+  BUDDY_PUNCH_SUSPECTED: 'account-multiple-check',
+  BUDDY_PUNCH_CONFIRMED: 'account-multiple-check',
+  COORDINATE_REPLAY: 'map-marker-off',
+  IP_GPS_MISMATCH: 'earth-off',
+  TIME_ANOMALY: 'clock-alert-outline',
+  RAPID_RECHECKIN: 'refresh-circle',
+  EXCESSIVE_DAILY_CHECKINS: 'counter',
+  MOCK_LOCATION: 'crosshairs-off',
+  VPN_DETECTED: 'vpn',
+  PROXY_DETECTED: 'shield-lock-outline',
+  TOR_EXIT_NODE: 'incognito',
+  IMPOSSIBLE_TRAVEL: 'airplane-alert',
+  UNKNOWN_DEVICE: 'devices',
+  LOW_GPS_ACCURACY: 'crosshairs-question',
+};
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -127,7 +145,7 @@ export const FraudBadge: React.FC<FraudBadgeProps> = ({ score, flags }) => {
                 <MaterialCommunityIcons
                   name="close"
                   size={20}
-                  color="#6B7280"
+                  color="#A1A1AA"
                 />
               </TouchableOpacity>
             </View>
@@ -144,7 +162,7 @@ export const FraudBadge: React.FC<FraudBadgeProps> = ({ score, flags }) => {
                 flags.map((flag, index) => (
                   <View key={`${flag}-${index}`} style={styles.flagItem}>
                     <MaterialCommunityIcons
-                      name="alert-circle-outline"
+                      name={FLAG_ICON_MAP[flag.split(':')[0]] ?? 'alert-circle-outline'}
                       size={16}
                       color={config.color}
                     />
@@ -194,12 +212,14 @@ const styles = StyleSheet.create({
   modal: {
     width: '100%',
     maxWidth: 360,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#18181B',
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.5,
     shadowRadius: 24,
     elevation: 10,
   },
@@ -218,7 +238,7 @@ const styles = StyleSheet.create({
   },
   modalScore: {
     fontSize: 13,
-    color: '#6B7280',
+    color: '#A1A1AA',
     marginTop: 1,
   },
   flagsList: {
@@ -234,16 +254,16 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 6,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: 'rgba(255,255,255,0.06)',
   },
   flagText: {
     fontSize: 14,
-    color: '#374151',
+    color: '#FAFAFA',
     flex: 1,
   },
   noFlagsText: {
     fontSize: 14,
-    color: '#9CA3AF',
+    color: '#71717A',
     textAlign: 'center',
     paddingVertical: 12,
   },

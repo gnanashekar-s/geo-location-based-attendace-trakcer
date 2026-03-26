@@ -14,6 +14,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -133,6 +134,29 @@ class User(Base):
         nullable=False,
         default=0,
         server_default="0",
+    )
+    risk_level: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        default="low",
+        server_default="low",
+        comment="Computed daily by user_risk_profiler task: low / medium / high.",
+    )
+    expected_checkin_hour: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True,
+        comment="Auto-detected usual check-in hour (0–24 float, e.g. 8.75 = 8:45 AM)",
+    )
+    expected_checkout_hour: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True,
+        comment="Auto-detected usual check-out hour (0–24 float)",
+    )
+    schedule_confidence: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True,
+        comment="0–1 confidence score for the detected schedule (higher = more consistent)",
+    )
+    department: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True,
+        comment="Employee's department name for grouping and analytics",
     )
     last_checkin_date: Mapped[Optional[date]] = mapped_column(
         Date,

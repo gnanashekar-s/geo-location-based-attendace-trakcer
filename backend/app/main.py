@@ -181,13 +181,16 @@ def create_app() -> FastAPI:
     # 1. Prometheus (must be before CORS so it captures every request)
     app.add_middleware(PrometheusMiddleware)
 
-    # 2. CORS
+    # 2. CORS — permissive for demo; tighten per-env in production
+    cors_origins = [str(o) for o in settings.CORS_ORIGINS]
+    allow_all = settings.DEBUG or cors_origins == ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.CORS_ORIGINS],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=["*"] if allow_all else cors_origins,
+        allow_credentials=not allow_all,  # credentials incompatible with wildcard origin
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With",
+                       "bypass-tunnel-logic"],
         expose_headers=["X-Request-ID", "X-Process-Time"],
     )
 

@@ -21,7 +21,7 @@ export default function Index() {
   if (!isInitialized) {
     return (
       <View style={styles.loading}>
-        <ActivityIndicator size="large" color="#4F46E5" />
+        <ActivityIndicator size="large" color="#6366F1" />
       </View>
     );
   }
@@ -30,7 +30,7 @@ export default function Index() {
     return <Redirect href="/(auth)/login" />;
   }
 
-  if (user?.role === 'org_admin' || user?.role === 'super_admin' || user?.role === 'admin') {
+  if (user?.role === 'org_admin' || user?.role === 'super_admin' || user?.role === 'admin' || user?.role === 'supervisor') {
     return <Redirect href="/(admin)/dashboard" />;
   }
 
@@ -42,6 +42,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#09090B',
   },
 });

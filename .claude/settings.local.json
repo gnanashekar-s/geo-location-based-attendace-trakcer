@@ -57,7 +57,12 @@
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d[k] for k in d if k in [''''exports'''',''''main'''',''''module'''',''''browser'''']}, indent=2\\)\\)\")",
       "Bash(python -c \":*)",
       "Bash(find C:UsersLenovoDocumentsgeo-location-based-attendancebackend -maxdepth 3 -name test_*.py -o -name tests.py)",
-      "Bash(docker info:*)"
+      "Bash(docker info:*)",
+      "Bash(find /c/Users/Lenovo/Documents/geo-location-based-attendance -maxdepth 3 -type d ! -path */venv* ! -path */node_modules*)",
+      "Bash(ls -la /c/Users/Lenovo/Documents/geo-location-based-attendance/mobile/app/\\\\\\(auth\\\\\\)/)",
+      "Bash(ls -la /c/Users/Lenovo/Documents/geo-location-based-attendance/mobile/app/\\\\\\(admin\\\\\\)/)",
+      "Bash(ls -la /c/Users/Lenovo/Documents/geo-location-based-attendance/mobile/app/\\\\\\(employee\\\\\\)/)",
+      "Bash(find /c/Users/Lenovo/Documents/geo-location-based-attendance -maxdepth 2 -name .env* -o -name *.env*)"
     ]
   }
 }

@@ -1,12 +1,13 @@
 import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Provider as PaperProvider, MD3LightTheme } from 'react-native-paper';
+import { Provider as PaperProvider, MD3DarkTheme } from 'react-native-paper';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import * as Location from 'expo-location';
 import { Platform, StyleSheet } from 'react-native';
 import { useAuthStore } from '@/store/authStore';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 // ─── Query Client ─────────────────────────────────────────────────────────────
 
@@ -23,32 +24,31 @@ const queryClient = new QueryClient({
 // ─── Theme ────────────────────────────────────────────────────────────────────
 
 const theme = {
-  ...MD3LightTheme,
+  ...MD3DarkTheme,
   colors: {
-    ...MD3LightTheme.colors,
-    primary: '#4F46E5',         // Indigo-600
-    primaryContainer: '#EEF2FF',
-    secondary: '#7C3AED',       // Violet-600
-    secondaryContainer: '#F5F3FF',
-    tertiary: '#0EA5E9',        // Sky-500
-    surface: '#FFFFFF',
-    surfaceVariant: '#F8FAFC',
-    background: '#F1F5F9',
+    ...MD3DarkTheme.colors,
+    primary: '#6366F1',
+    primaryContainer: 'rgba(99,102,241,0.15)',
+    secondary: '#8B5CF6',
+    secondaryContainer: 'rgba(139,92,246,0.15)',
+    surface: '#18181B',
+    surfaceVariant: '#27272A',
+    background: '#09090B',
     error: '#EF4444',
-    errorContainer: '#FEE2E2',
+    errorContainer: 'rgba(239,68,68,0.15)',
     onPrimary: '#FFFFFF',
     onSecondary: '#FFFFFF',
-    onBackground: '#1E293B',
-    onSurface: '#1E293B',
-    onSurfaceVariant: '#64748B',
-    outline: '#CBD5E1',
+    onBackground: '#FAFAFA',
+    onSurface: '#FAFAFA',
+    onSurfaceVariant: '#A1A1AA',
+    outline: 'rgba(255,255,255,0.12)',
     elevation: {
       level0: 'transparent',
-      level1: '#FFFFFF',
-      level2: '#F8FAFC',
-      level3: '#F1F5F9',
-      level4: '#E2E8F0',
-      level5: '#CBD5E1',
+      level1: '#18181B',
+      level2: '#27272A',
+      level3: '#3F3F46',
+      level4: '#52525B',
+      level5: '#71717A',
     },
   },
 };
@@ -82,9 +82,10 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.root}>
+      <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
         <PaperProvider theme={theme}>
-          <StatusBar style="auto" />
+          <StatusBar style="light" backgroundColor="#09090B" />
           <Stack
             screenOptions={{
               headerStyle: { backgroundColor: '#4F46E5' },
@@ -100,6 +101,7 @@ export default function RootLayout() {
           </Stack>
         </PaperProvider>
       </QueryClientProvider>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

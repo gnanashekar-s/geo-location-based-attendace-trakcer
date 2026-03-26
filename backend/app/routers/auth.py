@@ -17,7 +17,6 @@ from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -115,13 +114,22 @@ async def register(
                 detail=f"Organisation {org_id} not found.",
             )
 
+    # Map requested role; only allow safe self-registration roles
+    _ALLOWED_SELF_REGISTER_ROLES = {
+        "employee": UserRole.employee,
+        "supervisor": UserRole.supervisor,
+        "org_admin": UserRole.org_admin,
+    }
+    requested_role = (payload.role or "employee").lower()
+    assigned_role = _ALLOWED_SELF_REGISTER_ROLES.get(requested_role, UserRole.employee)
+
     user = User(
         id=uuid.uuid4(),
         email=payload.email,
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
         org_id=org_id,
-        role=UserRole.employee,
+        role=assigned_role,
         is_active=True,
         streak_count=0,
     )
@@ -242,24 +250,27 @@ async def refresh_token(
 # ---------------------------------------------------------------------------
 
 
+class LogoutRequest(BaseModel):
+    refresh_token: Optional[str] = None
+
+
 @router.post(
     "/logout",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
     summary="Revoke the current refresh token",
 )
 async def logout(
-    payload: RefreshRequest,
+    payload: Optional[LogoutRequest] = None,
     redis=Depends(get_redis),
-) -> Response:
+) -> dict:
     """
     Revoke a refresh token.  The associated access token will expire naturally.
 
-    Returns 204 regardless of whether the token existed (idempotent).
+    Returns 200 regardless of whether the token existed (idempotent).
     """
-    await revoke_refresh_token(payload.refresh_token, redis)
-    logger.debug("Refresh token revoked: %s…", payload.refresh_token[:8])
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    if payload and payload.refresh_token:
+        await revoke_refresh_token(payload.refresh_token, redis)
+        logger.debug("Refresh token revoked: %s…", payload.refresh_token[:8])
+    return {"message": "Logged out successfully."}
 
 
 # ---------------------------------------------------------------------------

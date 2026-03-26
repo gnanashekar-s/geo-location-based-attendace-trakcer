@@ -136,10 +136,22 @@ export default apiClient;
 
 // ─── Typed Helpers ────────────────────────────────────────────────────────────
 
+/**
+ * In demo mode, throw a special error so React Query hooks treat the call
+ * as a "no-op" without hitting the network. Individual hooks can supply
+ * their own demo data via queryFn overrides or initialData.
+ */
+function guardDemoMode(): void {
+  if (useAuthStore.getState().isDemoMode) {
+    throw Object.assign(new Error('Demo mode – network disabled'), { isDemo: true });
+  }
+}
+
 export async function apiGet<T>(
   url: string,
   config?: AxiosRequestConfig,
 ): Promise<T> {
+  guardDemoMode();
   const res = await apiClient.get<T>(url, config);
   return res.data;
 }
@@ -149,6 +161,7 @@ export async function apiPost<TData, TResponse>(
   data?: TData,
   config?: AxiosRequestConfig,
 ): Promise<TResponse> {
+  guardDemoMode();
   const res = await apiClient.post<TResponse>(url, data, config);
   return res.data;
 }
@@ -158,6 +171,7 @@ export async function apiPut<TData, TResponse>(
   data?: TData,
   config?: AxiosRequestConfig,
 ): Promise<TResponse> {
+  guardDemoMode();
   const res = await apiClient.put<TResponse>(url, data, config);
   return res.data;
 }
@@ -167,6 +181,7 @@ export async function apiPatch<TData, TResponse>(
   data?: TData,
   config?: AxiosRequestConfig,
 ): Promise<TResponse> {
+  guardDemoMode();
   const res = await apiClient.patch<TResponse>(url, data, config);
   return res.data;
 }
@@ -175,6 +190,7 @@ export async function apiDelete<TResponse>(
   url: string,
   config?: AxiosRequestConfig,
 ): Promise<TResponse> {
+  guardDemoMode();
   const res = await apiClient.delete<TResponse>(url, config);
   return res.data;
 }

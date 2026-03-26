@@ -132,7 +132,7 @@ services:
       celery -A app.workers.celery_app.celery_app worker
         --loglevel=info
         --concurrency=2
-        --queues=default,reports,escalation,geofence
+        --queues=default,reports,escalation,geofence,fraud
         --hostname=worker@%h
     volumes:
       - ./backend:/app

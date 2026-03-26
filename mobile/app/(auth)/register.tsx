@@ -1,40 +1,29 @@
 import React, { useState, useRef } from 'react';
 import {
-  View,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Pressable,
-  TextInput as RNTextInput,
+  View, Text, StyleSheet, KeyboardAvoidingView, Platform,
+  ScrollView, Pressable, TextInput, ActivityIndicator, StatusBar,
 } from 'react-native';
-import { Text, TextInput, Button, HelperText } from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { authApi } from '@/services/api';
+import { Colors, Radius, Shadow } from '@/constants/theme';
 
-interface FormErrors {
-  fullName?: string;
-  email?: string;
-  password?: string;
-  confirmPassword?: string;
-  general?: string;
-}
+const C = Colors;
 
-function validate(fullName: string, email: string, password: string, confirmPassword: string): FormErrors {
-  const errors: FormErrors = {};
-  if (!fullName.trim() || fullName.trim().length < 2) errors.fullName = 'Full name must be at least 2 characters';
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!email.trim()) errors.email = 'Email is required';
-  else if (!emailRegex.test(email.trim())) errors.email = 'Enter a valid email address';
-  if (!password) errors.password = 'Password is required';
-  else if (password.length < 8) errors.password = 'Password must be at least 8 characters';
-  else if (!/[A-Z]/.test(password)) errors.password = 'Password must contain an uppercase letter';
-  else if (!/[0-9]/.test(password)) errors.password = 'Password must contain a number';
-  if (!confirmPassword) errors.confirmPassword = 'Please confirm your password';
-  else if (password !== confirmPassword) errors.confirmPassword = 'Passwords do not match';
-  return errors;
+function validate(fullName: string, email: string, password: string, confirm: string) {
+  const e: Record<string, string> = {};
+  if (!fullName.trim() || fullName.trim().length < 2) e.fullName = 'At least 2 characters required';
+  if (!email.trim()) e.email = 'Email is required';
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) e.email = 'Invalid email address';
+  if (!password) e.password = 'Password is required';
+  else if (password.length < 8) e.password = 'At least 8 characters';
+  else if (!/[A-Z]/.test(password)) e.password = 'Add an uppercase letter';
+  else if (!/[0-9]/.test(password)) e.password = 'Add a number';
+  if (!confirm) e.confirm = 'Please confirm your password';
+  else if (password !== confirm) e.confirm = 'Passwords do not match';
+  return e;
 }
 
 export default function RegisterScreen() {
@@ -42,404 +31,279 @@ export default function RegisterScreen() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [confirm, setConfirm] = useState('');
+  const [role, setRole] = useState<'employee' | 'supervisor' | 'org_admin'>('employee');
+  const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errors, setErrors] = useState<FormErrors>({});
+  const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState(false);
 
-  const emailRef = useRef<RNTextInput>(null);
-  const passwordRef = useRef<RNTextInput>(null);
-  const confirmRef = useRef<RNTextInput>(null);
+  const emailRef = useRef<TextInput>(null);
+  const passRef = useRef<TextInput>(null);
+  const confirmRef = useRef<TextInput>(null);
 
   const handleRegister = async () => {
-    const newErrors = validate(fullName, email, password, confirmPassword);
-    if (Object.keys(newErrors).length > 0) {
-      setErrors(newErrors);
-      return;
-    }
+    const e = validate(fullName, email, password, confirm);
+    if (Object.keys(e).length > 0) { setErrors(e); return; }
     setErrors({});
-    setIsLoading(true);
+    setLoading(true);
     try {
-      await authApi.register({
-        full_name: fullName.trim(),
-        email: email.trim().toLowerCase(),
-        password,
-        role: 'employee',
-      });
+      await authApi.register({ full_name: fullName.trim(), email: email.trim().toLowerCase(), password, role });
       setSuccess(true);
     } catch (err: any) {
-      const status = err?.response?.status;
-      const detail = err?.response?.data?.detail;
-      if (status === 409) {
-        setErrors({ email: 'An account with this email already exists.' });
-      } else if (!err?.response) {
-        setErrors({ general: 'Cannot connect to server. Check your connection.' });
-      } else {
-        setErrors({ general: detail ?? 'Registration failed. Please try again.' });
-      }
+      const st = err?.response?.status;
+      if (st === 409) setErrors({ email: 'This email is already registered.' });
+      else if (!err?.response) setErrors({ general: 'Cannot connect to server.' });
+      else setErrors({ general: err?.response?.data?.detail ?? 'Registration failed.' });
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   if (success) {
     return (
-      <LinearGradient colors={['#4F46E5', '#7C3AED', '#A855F7']} style={styles.gradient}>
-        <View style={styles.successContainer}>
-          <View style={styles.successIcon}>
-            <MaterialCommunityIcons name="check-circle" size={64} color="#10B981" />
+      <View style={s.root}>
+        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+        <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
+          <View style={[s.card, { alignItems: 'center', paddingVertical: 40 }]}>
+            <View style={[s.logoGrad, { backgroundColor: C.successBg, marginBottom: 20 }]}>
+              <MaterialCommunityIcons name="check-circle" size={44} color={C.success} />
+            </View>
+            <Text style={[s.cardTitle, { textAlign: 'center', marginBottom: 8 }]}>Account created!</Text>
+            <Text style={[s.cardSub, { textAlign: 'center', marginBottom: 28 }]}>
+              Your account has been created.{'\n'}Sign in to get started.
+            </Text>
+            <Pressable onPress={() => router.replace('/(auth)/login')} style={{ width: '100%' }}>
+              <LinearGradient colors={['#6366F1', '#8B5CF6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.btn}>
+                <Text style={s.btnText}>Sign In Now</Text>
+              </LinearGradient>
+            </Pressable>
           </View>
-          <Text style={styles.successTitle}>Account Created!</Text>
-          <Text style={styles.successSubtitle}>
-            Your employee account has been created successfully. You can now sign in.
-          </Text>
-          <Button
-            mode="contained"
-            onPress={() => router.replace('/(auth)/login')}
-            style={styles.successBtn}
-            buttonColor="#4F46E5"
-            contentStyle={{ paddingVertical: 6 }}
-            labelStyle={{ fontSize: 16, fontWeight: '700' }}
-          >
-            Sign In Now
-          </Button>
-        </View>
-      </LinearGradient>
+        </SafeAreaView>
+      </View>
     );
   }
 
+  const pwReqs = [
+    { label: '8+ characters', met: password.length >= 8 },
+    { label: 'Uppercase', met: /[A-Z]/.test(password) },
+    { label: 'Number', met: /[0-9]/.test(password) },
+  ];
+
   return (
-    <LinearGradient
-      colors={['#4F46E5', '#7C3AED', '#A855F7']}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.gradient}
-    >
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <Pressable style={styles.backBtn} onPress={() => router.back()}>
-              <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
-            </Pressable>
-            <View style={styles.logoCircle}>
-              <MaterialCommunityIcons name="account-plus" size={40} color="#4F46E5" />
-            </View>
-            <Text style={styles.title}>Create Account</Text>
-            <Text style={styles.subtitle}>Join your organisation's attendance system</Text>
-          </View>
-
-          {/* Card */}
-          <View style={styles.card}>
-            {errors.general ? (
-              <View style={styles.errorBanner}>
-                <MaterialCommunityIcons name="alert-circle-outline" size={18} color="#DC2626" />
-                <Text style={styles.errorBannerText}>{errors.general}</Text>
-              </View>
-            ) : null}
-
-            {/* Full Name */}
-            <TextInput
-              label="Full Name"
-              value={fullName}
-              onChangeText={(t) => { setFullName(t); if (errors.fullName) setErrors(e => ({ ...e, fullName: undefined })); }}
-              autoCapitalize="words"
-              returnKeyType="next"
-              onSubmitEditing={() => emailRef.current?.focus()}
-              left={<TextInput.Icon icon="account-outline" />}
-              error={!!errors.fullName}
-              style={styles.input}
-              mode="outlined"
-              outlineColor="#E2E8F0"
-              activeOutlineColor="#4F46E5"
-              disabled={isLoading}
-            />
-            <HelperText type="error" visible={!!errors.fullName}>{errors.fullName}</HelperText>
-
-            {/* Email */}
-            <TextInput
-              ref={emailRef}
-              label="Email Address"
-              value={email}
-              onChangeText={(t) => { setEmail(t); if (errors.email) setErrors(e => ({ ...e, email: undefined })); }}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="next"
-              onSubmitEditing={() => passwordRef.current?.focus()}
-              left={<TextInput.Icon icon="email-outline" />}
-              error={!!errors.email}
-              style={styles.input}
-              mode="outlined"
-              outlineColor="#E2E8F0"
-              activeOutlineColor="#4F46E5"
-              disabled={isLoading}
-            />
-            <HelperText type="error" visible={!!errors.email}>{errors.email}</HelperText>
-
-            {/* Password */}
-            <TextInput
-              ref={passwordRef}
-              label="Password"
-              value={password}
-              onChangeText={(t) => { setPassword(t); if (errors.password) setErrors(e => ({ ...e, password: undefined })); }}
-              secureTextEntry={!showPassword}
-              returnKeyType="next"
-              onSubmitEditing={() => confirmRef.current?.focus()}
-              left={<TextInput.Icon icon="lock-outline" />}
-              right={<TextInput.Icon icon={showPassword ? 'eye-off-outline' : 'eye-outline'} onPress={() => setShowPassword(v => !v)} />}
-              error={!!errors.password}
-              style={styles.input}
-              mode="outlined"
-              outlineColor="#E2E8F0"
-              activeOutlineColor="#4F46E5"
-              disabled={isLoading}
-            />
-            <HelperText type="error" visible={!!errors.password}>{errors.password}</HelperText>
-
-            {/* Confirm Password */}
-            <TextInput
-              ref={confirmRef}
-              label="Confirm Password"
-              value={confirmPassword}
-              onChangeText={(t) => { setConfirmPassword(t); if (errors.confirmPassword) setErrors(e => ({ ...e, confirmPassword: undefined })); }}
-              secureTextEntry={!showConfirm}
-              returnKeyType="done"
-              onSubmitEditing={handleRegister}
-              left={<TextInput.Icon icon="lock-check-outline" />}
-              right={<TextInput.Icon icon={showConfirm ? 'eye-off-outline' : 'eye-outline'} onPress={() => setShowConfirm(v => !v)} />}
-              error={!!errors.confirmPassword}
-              style={styles.input}
-              mode="outlined"
-              outlineColor="#E2E8F0"
-              activeOutlineColor="#4F46E5"
-              disabled={isLoading}
-            />
-            <HelperText type="error" visible={!!errors.confirmPassword}>{errors.confirmPassword}</HelperText>
-
-            {/* Password requirements hint */}
-            <View style={styles.requirementsBox}>
-              <Text style={styles.requirementsTitle}>Password requirements:</Text>
-              {[
-                { text: 'At least 8 characters', met: password.length >= 8 },
-                { text: 'One uppercase letter', met: /[A-Z]/.test(password) },
-                { text: 'One number', met: /[0-9]/.test(password) },
-              ].map(r => (
-                <View key={r.text} style={styles.requirementRow}>
-                  <MaterialCommunityIcons
-                    name={r.met ? 'check-circle' : 'circle-outline'}
-                    size={14}
-                    color={r.met ? '#10B981' : '#94A3B8'}
-                  />
-                  <Text style={[styles.requirementText, r.met && styles.requirementMet]}>{r.text}</Text>
-                </View>
-              ))}
-            </View>
-
-            {/* Submit */}
-            <Button
-              mode="contained"
-              onPress={handleRegister}
-              loading={isLoading}
-              disabled={isLoading}
-              style={styles.submitBtn}
-              contentStyle={styles.submitBtnContent}
-              labelStyle={styles.submitBtnLabel}
-              buttonColor="#4F46E5"
-            >
-              {isLoading ? 'Creating Account…' : 'Create Account'}
-            </Button>
-
-            {/* Sign In link */}
-            <View style={styles.signInRow}>
-              <Text style={styles.signInText}>Already have an account? </Text>
-              <Pressable onPress={() => router.replace('/(auth)/login')}>
-                <Text style={styles.signInLink}>Sign In</Text>
+    <View style={s.root}>
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
+        <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <SafeAreaView edges={['top', 'bottom']}>
+            {/* Brand header */}
+            <View style={s.header}>
+              <Pressable onPress={() => router.back()} style={s.backBtn} hitSlop={10}>
+                <MaterialCommunityIcons name="arrow-left" size={22} color={C.textSub} />
               </Pressable>
+              <View style={s.logoGrad}>
+                <LinearGradient colors={['#6366F1', '#8B5CF6']} style={s.logoGradInner}>
+                  <MaterialCommunityIcons name="account-plus" size={26} color="#fff" />
+                </LinearGradient>
+              </View>
+              <Text style={s.appName}>Create Account</Text>
+              <Text style={s.appSub}>Join your organization on GeoAttend</Text>
             </View>
-          </View>
+
+            {/* Form card */}
+            <View style={s.card}>
+              {errors.general ? (
+                <View style={s.errorBanner}>
+                  <MaterialCommunityIcons name="alert-circle-outline" size={15} color={C.danger} />
+                  <Text style={s.errorText}>{errors.general}</Text>
+                </View>
+              ) : null}
+
+              {/* Full Name */}
+              <Field label="Full Name" error={errors.fullName}>
+                <FieldInput icon="account-outline" placeholder="Your full name" value={fullName}
+                  onChangeText={t => { setFullName(t); setErrors(e => ({ ...e, fullName: '' })); }}
+                  hasError={!!errors.fullName} autoCapitalize="words" returnKeyType="next"
+                  onSubmitEditing={() => emailRef.current?.focus()} editable={!loading} />
+              </Field>
+
+              {/* Email */}
+              <Field label="Email" error={errors.email}>
+                <FieldInput icon="email-outline" placeholder="you@company.com" value={email}
+                  onChangeText={t => { setEmail(t); setErrors(e => ({ ...e, email: '' })); }}
+                  hasError={!!errors.email} keyboardType="email-address" autoCapitalize="none"
+                  returnKeyType="next" onSubmitEditing={() => passRef.current?.focus()}
+                  editable={!loading} inputRef={emailRef} />
+              </Field>
+
+              {/* Password */}
+              <Field label="Password" error={errors.password}>
+                <FieldInput icon="lock-outline" placeholder="Create a password" value={password}
+                  onChangeText={t => { setPassword(t); setErrors(e => ({ ...e, password: '' })); }}
+                  hasError={!!errors.password} secureTextEntry={!showPass}
+                  returnKeyType="next" onSubmitEditing={() => confirmRef.current?.focus()}
+                  editable={!loading} inputRef={passRef}
+                  right={<Pressable onPress={() => setShowPass(v => !v)} hitSlop={10}>
+                    <MaterialCommunityIcons name={showPass ? 'eye-off-outline' : 'eye-outline'} size={18} color={C.textMuted} />
+                  </Pressable>} />
+                {/* Password strength chips */}
+                {password.length > 0 && (
+                  <View style={s.pwReqs}>
+                    {pwReqs.map(r => (
+                      <View key={r.label} style={[s.pwChip, r.met && s.pwChipMet]}>
+                        <MaterialCommunityIcons name={r.met ? 'check-circle' : 'circle-outline'} size={11} color={r.met ? C.success : C.textMuted} />
+                        <Text style={[s.pwChipText, r.met && { color: C.success }]}>{r.label}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </Field>
+
+              {/* Role */}
+              <View style={s.fieldWrap}>
+                <Text style={s.label}>Account Type</Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {([
+                    { value: 'employee' as const, label: 'Employee' },
+                    { value: 'supervisor' as const, label: 'Supervisor' },
+                    { value: 'org_admin' as const, label: 'Admin' },
+                  ]).map(r => (
+                    <Pressable key={r.value} onPress={() => setRole(r.value)}
+                      style={[s.inputRow, { flex: 1, justifyContent: 'center', height: 38,
+                        borderColor: role === r.value ? C.primary : C.border,
+                        backgroundColor: role === r.value ? C.primaryBg : C.card2,
+                      }]}>
+                      <Text style={{ fontSize: 12, fontWeight: '600',
+                        color: role === r.value ? C.primary : C.textMuted }}>{r.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              {/* Confirm Password */}
+              <Field label="Confirm Password" error={errors.confirm}>
+                <FieldInput icon="lock-check-outline" placeholder="Repeat password" value={confirm}
+                  onChangeText={t => { setConfirm(t); setErrors(e => ({ ...e, confirm: '' })); }}
+                  hasError={!!errors.confirm} secureTextEntry={!showConfirm}
+                  returnKeyType="done" onSubmitEditing={handleRegister}
+                  editable={!loading} inputRef={confirmRef}
+                  right={<Pressable onPress={() => setShowConfirm(v => !v)} hitSlop={10}>
+                    <MaterialCommunityIcons name={showConfirm ? 'eye-off-outline' : 'eye-outline'} size={18} color={C.textMuted} />
+                  </Pressable>} />
+              </Field>
+
+              <Pressable onPress={handleRegister} disabled={loading}
+                style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1, marginTop: 8 })}>
+                <LinearGradient colors={['#6366F1', '#8B5CF6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.btn}>
+                  {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={s.btnText}>Create Account</Text>}
+                </LinearGradient>
+              </Pressable>
+
+              <View style={s.footer}>
+                <Text style={s.footerText}>Already have an account? </Text>
+                <Pressable onPress={() => router.back()}>
+                  <Text style={s.footerLink}>Sign In</Text>
+                </Pressable>
+              </View>
+            </View>
+          </SafeAreaView>
         </ScrollView>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  gradient: { flex: 1 },
-  flex: { flex: 1 },
-  scroll: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 48,
-    paddingBottom: 32,
-  },
-  header: {
-    alignItems: 'center',
-    marginBottom: 28,
-    position: 'relative',
-  },
-  backBtn: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  title: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 4,
-    textAlign: 'center',
-  },
+// ── Field wrapper ─────────────────────────────────────────────────────────────
+
+function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
+  return (
+    <View style={s.fieldWrap}>
+      <Text style={s.label}>{label}</Text>
+      {children}
+      {error ? <Text style={s.fieldErr}>{error}</Text> : null}
+    </View>
+  );
+}
+
+function FieldInput({ icon, placeholder, value, onChangeText, hasError, secureTextEntry, keyboardType, autoCapitalize, returnKeyType, onSubmitEditing, editable, inputRef, right }: any) {
+  return (
+    <View style={[s.inputRow, hasError && s.inputError]}>
+      <MaterialCommunityIcons name={icon} size={17} color={hasError ? C.danger : C.textMuted} style={{ marginRight: 8 }} />
+      <TextInput
+        ref={inputRef}
+        style={s.input}
+        placeholder={placeholder} placeholderTextColor={C.textMuted}
+        value={value} onChangeText={onChangeText}
+        secureTextEntry={secureTextEntry}
+        keyboardType={keyboardType ?? 'default'}
+        autoCapitalize={autoCapitalize ?? 'none'}
+        autoCorrect={false}
+        returnKeyType={returnKeyType ?? 'next'}
+        onSubmitEditing={onSubmitEditing}
+        editable={editable !== false}
+        selectionColor={C.primary}
+      />
+      {right}
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: C.bg },
+  scroll: { flexGrow: 1, paddingHorizontal: 20, paddingVertical: 32 },
+
+  header: { alignItems: 'center', marginBottom: 28 },
+  backBtn: { alignSelf: 'flex-start', marginBottom: 20, padding: 4 },
+  logoGrad: { marginBottom: 14 },
+  logoGradInner: { width: 56, height: 56, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  appName: { fontSize: 22, fontWeight: '700', color: C.text, letterSpacing: -0.3, marginBottom: 4 },
+  appSub: { fontSize: 13, color: C.textMuted },
+
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    elevation: 12,
+    backgroundColor: C.card, borderRadius: Radius.xl,
+    borderWidth: 1, borderColor: C.borderStrong,
+    padding: 24, ...Shadow.md,
   },
+  cardTitle: { fontSize: 20, fontWeight: '700', color: C.text },
+  cardSub: { fontSize: 13, color: C.textMuted },
+
   errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEE2E2',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 12,
-    gap: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: C.dangerBg, borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)',
+    borderRadius: Radius.md, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 16,
   },
-  errorBannerText: {
-    color: '#DC2626',
-    fontSize: 13,
-    flex: 1,
+  errorText: { color: C.danger, fontSize: 13, flex: 1 },
+
+  fieldWrap: { marginBottom: 14 },
+  label: { fontSize: 12, fontWeight: '600', color: C.textSub, marginBottom: 6, letterSpacing: 0.2 },
+  inputRow: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: C.card2, borderRadius: Radius.md,
+    borderWidth: 1, borderColor: C.border,
+    paddingHorizontal: 12, height: 46,
   },
-  input: {
-    backgroundColor: '#FFFFFF',
-    marginBottom: 2,
+  inputError: { borderColor: 'rgba(239,68,68,0.4)', backgroundColor: 'rgba(239,68,68,0.04)' },
+  input: { flex: 1, color: C.text, fontSize: 14, paddingVertical: 0 },
+  fieldErr: { fontSize: 11, color: C.danger, marginTop: 4, marginLeft: 2 },
+
+  pwReqs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  pwChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: C.card2, borderRadius: 20,
+    paddingHorizontal: 8, paddingVertical: 3,
   },
-  requirementsBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
-    gap: 6,
+  pwChipMet: { backgroundColor: C.successBg },
+  pwChipText: { fontSize: 11, color: C.textMuted, fontWeight: '500' },
+
+  btn: {
+    height: 48, borderRadius: Radius.md,
+    alignItems: 'center', justifyContent: 'center',
+    ...Shadow.glow('#6366F1'),
   },
-  requirementsTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  requirementRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  requirementText: {
-    fontSize: 12,
-    color: '#94A3B8',
-  },
-  requirementMet: {
-    color: '#10B981',
-  },
-  submitBtn: {
-    borderRadius: 12,
-    marginBottom: 16,
-  },
-  submitBtnContent: {
-    paddingVertical: 6,
-  },
-  submitBtnLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  signInRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  signInText: {
-    fontSize: 14,
-    color: '#64748B',
-  },
-  signInLink: {
-    fontSize: 14,
-    color: '#4F46E5',
-    fontWeight: '700',
-  },
-  successContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-    gap: 16,
-  },
-  successIcon: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  successTitle: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  successSubtitle: {
-    fontSize: 15,
-    color: 'rgba(255,255,255,0.85)',
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  successBtn: {
-    marginTop: 8,
-    borderRadius: 12,
-    width: '100%',
-  },
+  btnText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.2 },
+
+  footer: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 20 },
+  footerText: { fontSize: 13, color: C.textSub },
+  footerLink: { fontSize: 13, color: C.primary, fontWeight: '700' },
 });

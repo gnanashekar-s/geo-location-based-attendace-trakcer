@@ -107,7 +107,7 @@ async def list_pending_approvals(
     "/bulk-approve",
     summary="Bulk approve multiple requests",
     dependencies=[
-        Depends(require_roles(UserRole.org_admin, UserRole.super_admin))
+        Depends(require_roles(UserRole.supervisor, UserRole.org_admin, UserRole.super_admin))
     ],
 )
 async def bulk_approve(

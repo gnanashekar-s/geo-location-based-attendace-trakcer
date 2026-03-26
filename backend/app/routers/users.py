@@ -20,6 +20,7 @@ from datetime import date, datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import and_, case as sa_case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -157,7 +158,7 @@ async def update_me(
     "/",
     response_model=UserListResponse,
     summary="List users (admin only)",
-    dependencies=[Depends(require_roles(UserRole.org_admin, UserRole.super_admin))],
+    dependencies=[Depends(require_roles(UserRole.supervisor, UserRole.org_admin, UserRole.super_admin))],
 )
 async def list_users(
     skip: int = Query(default=0, ge=0),
@@ -213,7 +214,7 @@ async def list_users(
     response_model=UserProfile,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new user (admin only)",
-    dependencies=[Depends(require_roles(UserRole.org_admin, UserRole.super_admin))],
+    dependencies=[Depends(require_roles(UserRole.supervisor, UserRole.org_admin, UserRole.super_admin))],
 )
 async def create_user(
     payload: UserCreate,
@@ -262,7 +263,7 @@ async def create_user(
     "/{user_id}",
     response_model=UserProfile,
     summary="Get a user by ID (admin only)",
-    dependencies=[Depends(require_roles(UserRole.org_admin, UserRole.super_admin))],
+    dependencies=[Depends(require_roles(UserRole.supervisor, UserRole.org_admin, UserRole.super_admin))],
 )
 async def get_user(
     user_id: uuid.UUID,
@@ -289,7 +290,7 @@ async def get_user(
     "/{user_id}",
     response_model=UserProfile,
     summary="Update a user (admin only)",
-    dependencies=[Depends(require_roles(UserRole.org_admin, UserRole.super_admin))],
+    dependencies=[Depends(require_roles(UserRole.supervisor, UserRole.org_admin, UserRole.super_admin))],
 )
 async def update_user(
     user_id: uuid.UUID,
@@ -322,15 +323,15 @@ async def update_user(
 @router.delete(
     "/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    response_model=None,
+    response_class=Response,
     summary="Delete a user (admin only)",
-    dependencies=[Depends(require_roles(UserRole.org_admin, UserRole.super_admin))],
+    dependencies=[Depends(require_roles(UserRole.supervisor, UserRole.org_admin, UserRole.super_admin))],
 )
 async def delete_user(
     user_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalars().first()
     if user is None:
@@ -342,3 +343,4 @@ async def delete_user(
     await db.delete(user)
     await db.commit()
     logger.info("User %s deleted by %s", user_id, current_user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

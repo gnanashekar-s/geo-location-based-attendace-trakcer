@@ -296,7 +296,7 @@ async def upcoming_shift(
     "/{record_id}/mark-safe",
     response_model=AttendanceRecord,
     summary="Mark an attendance record as safe (admin only)",
-    dependencies=[Depends(require_roles(UserRole.org_admin, UserRole.super_admin))],
+    dependencies=[Depends(require_roles(UserRole.supervisor, UserRole.org_admin, UserRole.super_admin))],
 )
 async def mark_safe(
     record_id: uuid.UUID,

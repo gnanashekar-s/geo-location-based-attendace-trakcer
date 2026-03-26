@@ -19,6 +19,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -123,7 +124,7 @@ async def get_site(
     response_model=SiteResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new geofence site",
-    dependencies=[Depends(require_roles(UserRole.org_admin, UserRole.super_admin))],
+    dependencies=[Depends(require_roles(UserRole.supervisor, UserRole.org_admin, UserRole.super_admin))],
 )
 async def create_site(
     payload: SiteCreate,
@@ -160,7 +161,7 @@ async def create_site(
     "/{site_id}",
     response_model=SiteResponse,
     summary="Update geofence site",
-    dependencies=[Depends(require_roles(UserRole.org_admin, UserRole.super_admin))],
+    dependencies=[Depends(require_roles(UserRole.supervisor, UserRole.org_admin, UserRole.super_admin))],
 )
 async def update_site(
     site_id: UUID,
@@ -198,15 +199,16 @@ async def update_site(
 @router.delete(
     "/{site_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
     summary="Soft-delete a geofence site",
-    dependencies=[Depends(require_roles(UserRole.org_admin, UserRole.super_admin))],
+    dependencies=[Depends(require_roles(UserRole.supervisor, UserRole.org_admin, UserRole.super_admin))],
 )
 async def delete_site(
     site_id: UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
-) -> None:
+) -> Response:
     result = await db.execute(select(Site).where(Site.id == site_id))
     site = result.scalar_one_or_none()
     if not site:
@@ -218,6 +220,7 @@ async def delete_site(
     await db.commit()
     await _invalidate_geofence_cache(site_id, redis)
     logger.info("Site '%s' deactivated by %s", site.name, current_user.email)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------

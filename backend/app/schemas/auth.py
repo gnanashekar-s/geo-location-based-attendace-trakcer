@@ -31,6 +31,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
     full_name: str = Field(..., min_length=2, max_length=200)
     org_id: Optional[UUID] = None
+    role: Optional[str] = Field(default="employee", description="employee | supervisor | org_admin")
 
     model_config = {
         "json_schema_extra": {

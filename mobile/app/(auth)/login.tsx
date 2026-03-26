@@ -1,434 +1,306 @@
 import React, { useState, useRef } from 'react';
 import {
   View,
+  Text,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Dimensions,
   Pressable,
-  TextInput as RNTextInput,
+  TextInput,
+  ActivityIndicator,
+  StatusBar,
 } from 'react-native';
-import { Text, TextInput, Button, HelperText } from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuthStore } from '@/store/authStore';
+import { Colors, Radius, Spacing, Shadow } from '@/constants/theme';
 
-const { width } = Dimensions.get('window');
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface FormErrors {
-  email?: string;
-  password?: string;
-  general?: string;
-}
-
-// ─── Validators ───────────────────────────────────────────────────────────────
-
-function validateEmail(email: string): string | undefined {
-  if (!email.trim()) return 'Email is required';
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email.trim())) return 'Enter a valid email address';
-  return undefined;
-}
-
-function validatePassword(password: string): string | undefined {
-  if (!password) return 'Password is required';
-  if (password.length < 6) return 'Password must be at least 6 characters';
-  return undefined;
-}
-
-// ─── Component ────────────────────────────────────────────────────────────────
+const C = Colors;
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, user } = useAuthStore();
+  const { login, enterDemoMode } = useAuthStore();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errors, setErrors] = useState<FormErrors>({});
+  const [showPass, setShowPass] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
 
-  const passwordRef = useRef<RNTextInput>(null);
+  const passRef = useRef<TextInput>(null);
 
-  // ── Validation ──────────────────────────────────────────────────────────────
-
-  const validate = (): boolean => {
-    const newErrors: FormErrors = {
-      email: validateEmail(email),
-      password: validatePassword(password),
-    };
-    setErrors(newErrors);
-    return !newErrors.email && !newErrors.password;
+  const validate = () => {
+    const e: typeof fieldErrors = {};
+    if (!email.trim()) e.email = 'Email is required';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) e.email = 'Invalid email';
+    if (!password) e.password = 'Password is required';
+    else if (password.length < 6) e.password = 'At least 6 characters';
+    setFieldErrors(e);
+    return Object.keys(e).length === 0;
   };
-
-  // ── Submit ──────────────────────────────────────────────────────────────────
 
   const handleLogin = async () => {
     if (!validate()) return;
-    setIsLoading(true);
-    setErrors({});
-
+    setLoading(true);
+    setError(null);
     try {
-      // login() calls POST /auth/login with JSON {email, password} and persists
-      // tokens + user in Zustand (and AsyncStorage via the persist middleware).
-      await login(email, password);
-
-      // Re-read role from updated store state after login resolves.
-      const updatedUser = useAuthStore.getState().user;
-      const isAdmin =
-        updatedUser?.role === 'org_admin' || updatedUser?.role === 'admin' || updatedUser?.role === 'super_admin';
-
-      // Navigate to role-appropriate root; AuthGuard in _layout also enforces this.
-      if (isAdmin) {
-        router.replace('/(admin)/dashboard');
-      } else {
-        router.replace('/(employee)');
-      }
+      await login(email.trim().toLowerCase(), password);
+      const user = useAuthStore.getState().user;
+      const isAdmin = user?.role === 'org_admin' || user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'supervisor';
+      router.replace(isAdmin ? '/(admin)/dashboard' : '/(employee)');
     } catch (err: any) {
-      const status = err?.response?.status;
-      const detail = err?.response?.data?.detail;
-
-      if (status === 401 || status === 403) {
-        setErrors({ general: 'Invalid email or password. Please try again.' });
-      } else if (status === 422) {
-        setErrors({ general: 'Please check your input and try again.' });
-      } else if (!err?.response) {
-        setErrors({
-          general: 'Cannot connect to server. Check your internet connection.',
-        });
-      } else {
-        setErrors({
-          general: detail ?? 'An unexpected error occurred. Please try again.',
-        });
-      }
+      const s = err?.response?.status;
+      if (s === 401 || s === 403) setError('Incorrect email or password.');
+      else if (s === 422) setError('Please check your input and try again.');
+      else if (!err?.response) setError('Cannot connect to server. Check your connection.');
+      else setError(err?.response?.data?.detail ?? 'Something went wrong.');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  const handleDemo = (role: 'employee' | 'admin') => {
+    enterDemoMode(role);
+    router.replace(role === 'admin' ? '/(admin)/dashboard' : '/(employee)');
+  };
 
   return (
-    <LinearGradient
-      colors={['#4F46E5', '#7C3AED', '#A855F7']}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.gradient}
-    >
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {/* ── Logo Section ── */}
-          <View style={styles.logoSection}>
-            <View style={styles.logoCircle}>
-              <MaterialCommunityIcons
-                name="map-marker-check"
-                size={52}
-                color="#4F46E5"
-              />
-            </View>
-            <Text variant="headlineMedium" style={styles.appName}>
-              GeoAttendance
-            </Text>
-            <Text variant="bodyMedium" style={styles.tagline}>
-              Smart location-based attendance
-            </Text>
-          </View>
+    <View style={s.root}>
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
+        <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <SafeAreaView edges={['top', 'bottom']}>
 
-          {/* ── Card ── */}
-          <View style={styles.card}>
-            <Text variant="headlineSmall" style={styles.cardTitle}>
-              Welcome back
-            </Text>
-            <Text variant="bodyMedium" style={styles.cardSubtitle}>
-              Sign in to your account
-            </Text>
-
-            {/* General Error Banner */}
-            {errors.general ? (
-              <View style={styles.errorBanner}>
-                <MaterialCommunityIcons
-                  name="alert-circle-outline"
-                  size={18}
-                  color="#DC2626"
-                />
-                <Text style={styles.errorBannerText}>{errors.general}</Text>
+            {/* ── Brand ── */}
+            <View style={s.brand}>
+              <View style={s.logoWrap}>
+                <LinearGradient colors={['#6366F1', '#8B5CF6']} style={s.logoGrad}>
+                  <MaterialCommunityIcons name="shield-check" size={28} color="#fff" />
+                </LinearGradient>
               </View>
-            ) : null}
-
-            {/* Email Input */}
-            <TextInput
-              label="Email address"
-              value={email}
-              onChangeText={(text) => {
-                setEmail(text);
-                if (errors.email) setErrors((e) => ({ ...e, email: undefined }));
-              }}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="next"
-              onSubmitEditing={() => passwordRef.current?.focus()}
-              left={<TextInput.Icon icon="email-outline" />}
-              error={!!errors.email}
-              style={styles.input}
-              mode="outlined"
-              outlineColor="#E2E8F0"
-              activeOutlineColor="#4F46E5"
-              disabled={isLoading}
-              accessibilityLabel="Email address"
-            />
-            <HelperText type="error" visible={!!errors.email}>
-              {errors.email}
-            </HelperText>
-
-            {/* Password Input */}
-            <TextInput
-              ref={passwordRef}
-              label="Password"
-              value={password}
-              onChangeText={(text) => {
-                setPassword(text);
-                if (errors.password)
-                  setErrors((e) => ({ ...e, password: undefined }));
-              }}
-              secureTextEntry={!showPassword}
-              returnKeyType="done"
-              onSubmitEditing={handleLogin}
-              left={<TextInput.Icon icon="lock-outline" />}
-              right={
-                <TextInput.Icon
-                  icon={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                  onPress={() => setShowPassword((v) => !v)}
-                />
-              }
-              error={!!errors.password}
-              style={styles.input}
-              mode="outlined"
-              outlineColor="#E2E8F0"
-              activeOutlineColor="#4F46E5"
-              disabled={isLoading}
-              accessibilityLabel="Password"
-            />
-            <HelperText type="error" visible={!!errors.password}>
-              {errors.password}
-            </HelperText>
-
-            {/* Forgot Password link */}
-            <Pressable
-              style={styles.forgotPassword}
-              onPress={() => router.push('/(auth)/forgot-password' as any)}
-              accessible
-              accessibilityRole="button"
-              accessibilityLabel="Forgot password"
-            >
-              <Text style={styles.forgotPasswordText}>Forgot password?</Text>
-            </Pressable>
-
-            {/* Sign In Button */}
-            <Button
-              mode="contained"
-              onPress={handleLogin}
-              loading={isLoading}
-              disabled={isLoading}
-              style={styles.signInButton}
-              contentStyle={styles.signInButtonContent}
-              labelStyle={styles.signInButtonLabel}
-              buttonColor="#4F46E5"
-              accessibilityLabel="Sign in"
-            >
-              {isLoading ? 'Signing in…' : 'Sign In'}
-            </Button>
-
-            {/* Divider */}
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>secured by TLS</Text>
-              <View style={styles.dividerLine} />
+              <Text style={s.appName}>GeoAttend</Text>
+              <Text style={s.appSub}>Attendance & location tracking</Text>
             </View>
 
-            {/* Security badges */}
-            <View style={styles.securityRow}>
-              <MaterialCommunityIcons
-                name="shield-check"
-                size={16}
-                color="#10B981"
-              />
-              <Text style={styles.securityText}>
-                256-bit encrypted connection
-              </Text>
-            </View>
+            {/* ── Card ── */}
+            <View style={s.card}>
+              <Text style={s.cardTitle}>Sign in</Text>
+              <Text style={s.cardSub}>Enter your credentials to continue</Text>
 
-            {/* Sign Up link */}
-            <View style={styles.signUpRow}>
-              <Text style={styles.signUpText}>Don't have an account? </Text>
-              <Pressable onPress={() => router.push('/(auth)/register')}>
-                <Text style={styles.signUpLink}>Sign Up</Text>
+              {/* Error banner */}
+              {error ? (
+                <View style={s.errorBanner}>
+                  <MaterialCommunityIcons name="alert-circle-outline" size={15} color={C.danger} />
+                  <Text style={s.errorText}>{error}</Text>
+                </View>
+              ) : null}
+
+              {/* Email */}
+              <View style={s.fieldWrap}>
+                <Text style={s.label}>Email</Text>
+                <View style={[s.inputRow, fieldErrors.email && s.inputError]}>
+                  <MaterialCommunityIcons name="email-outline" size={17} color={fieldErrors.email ? C.danger : C.textMuted} style={s.inputIcon} />
+                  <TextInput
+                    style={s.input}
+                    placeholder="you@company.com"
+                    placeholderTextColor={C.textMuted}
+                    value={email}
+                    onChangeText={t => { setEmail(t); setFieldErrors(e => ({ ...e, email: undefined })); }}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="next"
+                    onSubmitEditing={() => passRef.current?.focus()}
+                    editable={!loading}
+                    selectionColor={C.primary}
+                  />
+                </View>
+                {fieldErrors.email ? <Text style={s.fieldErr}>{fieldErrors.email}</Text> : null}
+              </View>
+
+              {/* Password */}
+              <View style={s.fieldWrap}>
+                <Text style={s.label}>Password</Text>
+                <View style={[s.inputRow, fieldErrors.password && s.inputError]}>
+                  <MaterialCommunityIcons name="lock-outline" size={17} color={fieldErrors.password ? C.danger : C.textMuted} style={s.inputIcon} />
+                  <TextInput
+                    ref={passRef}
+                    style={s.input}
+                    placeholder="Enter your password"
+                    placeholderTextColor={C.textMuted}
+                    value={password}
+                    onChangeText={t => { setPassword(t); setFieldErrors(e => ({ ...e, password: undefined })); }}
+                    secureTextEntry={!showPass}
+                    returnKeyType="done"
+                    onSubmitEditing={handleLogin}
+                    editable={!loading}
+                    selectionColor={C.primary}
+                  />
+                  <Pressable onPress={() => setShowPass(v => !v)} hitSlop={10}>
+                    <MaterialCommunityIcons name={showPass ? 'eye-off-outline' : 'eye-outline'} size={18} color={C.textMuted} />
+                  </Pressable>
+                </View>
+                {fieldErrors.password ? <Text style={s.fieldErr}>{fieldErrors.password}</Text> : null}
+              </View>
+
+              {/* Forgot */}
+              <Pressable style={s.forgotRow} onPress={() => router.push('/(auth)/forgot-password' as any)}>
+                <Text style={s.forgotText}>Forgot password?</Text>
               </Pressable>
+
+              {/* CTA */}
+              <Pressable
+                onPress={handleLogin}
+                disabled={loading}
+                style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1, marginTop: 4 })}
+              >
+                <LinearGradient colors={['#6366F1', '#8B5CF6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.btn}>
+                  {loading
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={s.btnText}>Sign In</Text>
+                  }
+                </LinearGradient>
+              </Pressable>
+
+              {/* Divider */}
+              <View style={s.divRow}>
+                <View style={s.divLine} />
+                <Text style={s.divText}>or</Text>
+                <View style={s.divLine} />
+              </View>
+
+              {/* Register link */}
+              <View style={s.footer}>
+                <Text style={s.footerText}>Don't have an account? </Text>
+                <Pressable onPress={() => router.push('/(auth)/register')}>
+                  <Text style={s.footerLink}>Register</Text>
+                </Pressable>
+              </View>
             </View>
-          </View>
+
+            {/* ── Demo Mode ── */}
+            <View style={s.demoSection}>
+              <View style={s.demoDivRow}>
+                <View style={s.divLine} />
+                <View style={s.demoBadge}>
+                  <MaterialCommunityIcons name="play-circle-outline" size={14} color="#F59E0B" />
+                  <Text style={s.demoBadgeText}>DEMO MODE</Text>
+                </View>
+                <View style={s.divLine} />
+              </View>
+              <Text style={s.demoHint}>Explore the app with sample data — no account needed</Text>
+              <View style={s.demoBtnRow}>
+                <Pressable
+                  style={({ pressed }) => [s.demoBtn, pressed && { opacity: 0.8 }]}
+                  onPress={() => handleDemo('employee')}
+                >
+                  <MaterialCommunityIcons name="account-outline" size={18} color="#6366F1" />
+                  <Text style={s.demoBtnText}>Employee View</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [s.demoBtn, s.demoBtnAdmin, pressed && { opacity: 0.8 }]}
+                  onPress={() => handleDemo('admin')}
+                >
+                  <MaterialCommunityIcons name="shield-crown-outline" size={18} color="#F59E0B" />
+                  <Text style={[s.demoBtnText, { color: '#F59E0B' }]}>Admin View</Text>
+                </Pressable>
+              </View>
+            </View>
+
+          </SafeAreaView>
         </ScrollView>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </View>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: C.bg },
+  scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 40 },
 
-const styles = StyleSheet.create({
-  gradient: {
-    flex: 1,
+  brand: { alignItems: 'center', marginBottom: 36 },
+  logoWrap: {
+    marginBottom: 14,
+    ...Shadow.glow('#6366F1'),
   },
-  flex: {
-    flex: 1,
+  logoGrad: {
+    width: 60, height: 60, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
   },
-  scroll: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    paddingHorizontal: Platform.OS === 'web' ? '10%' as any : 24,
-    paddingVertical: 48,
-    alignItems: Platform.OS === 'web' ? 'center' : undefined,
-  },
-  logoSection: {
-    alignItems: 'center',
-    marginBottom: 32,
-  },
-  logoCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  appName: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  tagline: {
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 4,
-  },
+  appName: { fontSize: 24, fontWeight: '700', color: C.text, letterSpacing: -0.3, marginBottom: 4 },
+  appSub: { fontSize: 13, color: C.textMuted, fontWeight: '400' },
+
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 28,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    elevation: 12,
-    width: Platform.OS === 'web' ? Math.min(width * 0.9, 480) : undefined,
+    backgroundColor: C.card,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+    padding: 24,
+    ...Shadow.md,
   },
-  cardTitle: {
-    fontWeight: '700',
-    color: '#1E293B',
-    marginBottom: 4,
-  },
-  cardSubtitle: {
-    color: '#64748B',
-    marginBottom: 20,
-  },
+  cardTitle: { fontSize: 20, fontWeight: '700', color: C.text, marginBottom: 4 },
+  cardSub: { fontSize: 13, color: C.textMuted, marginBottom: 20 },
+
   errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEE2E2',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 12,
-    gap: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: C.dangerBg,
+    borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)',
+    borderRadius: Radius.md, paddingHorizontal: 12, paddingVertical: 10,
+    marginBottom: 16,
   },
-  errorBannerText: {
-    color: '#DC2626',
-    fontSize: 13,
-    flex: 1,
-    lineHeight: 18,
+  errorText: { color: C.danger, fontSize: 13, flex: 1 },
+
+  fieldWrap: { marginBottom: 14 },
+  label: { fontSize: 12, fontWeight: '600', color: C.textSub, marginBottom: 6, letterSpacing: 0.2 },
+
+  inputRow: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: C.card2, borderRadius: Radius.md,
+    borderWidth: 1, borderColor: C.border,
+    paddingHorizontal: 12, height: 46,
   },
-  input: {
-    backgroundColor: '#FFFFFF',
-    marginBottom: 2,
+  inputError: { borderColor: 'rgba(239,68,68,0.4)', backgroundColor: 'rgba(239,68,68,0.04)' },
+  inputIcon: { marginRight: 8 },
+  input: { flex: 1, color: C.text, fontSize: 14, paddingVertical: 0 },
+  fieldErr: { fontSize: 11, color: C.danger, marginTop: 4, marginLeft: 2 },
+
+  forgotRow: { alignSelf: 'flex-end', marginBottom: 20, marginTop: 4 },
+  forgotText: { fontSize: 13, color: C.primary, fontWeight: '600' },
+
+  btn: {
+    height: 48, borderRadius: Radius.md,
+    alignItems: 'center', justifyContent: 'center',
+    ...Shadow.glow('#6366F1'),
   },
-  forgotPassword: {
-    alignSelf: 'flex-end',
-    marginBottom: 20,
-    marginTop: 4,
-    cursor: 'pointer' as any,
+  btnText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.2 },
+
+  divRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 20 },
+  divLine: { flex: 1, height: 1, backgroundColor: C.border },
+  divText: { fontSize: 12, color: C.textMuted, fontWeight: '500' },
+
+  footer: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  footerText: { fontSize: 13, color: C.textSub },
+  footerLink: { fontSize: 13, color: C.primary, fontWeight: '700' },
+
+  // Demo
+  demoSection: { marginTop: 24, gap: 10 },
+  demoDivRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  demoBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(245,158,11,0.10)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20,
   },
-  forgotPasswordText: {
-    color: '#4F46E5',
-    fontSize: 13,
-    fontWeight: '600',
+  demoBadgeText: { fontSize: 10, fontWeight: '800', color: '#F59E0B', letterSpacing: 0.8 },
+  demoHint: { fontSize: 12, color: C.textMuted, textAlign: 'center', fontWeight: '400' },
+  demoBtnRow: { flexDirection: 'row', gap: 10 },
+  demoBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7,
+    height: 44, borderRadius: Radius.md,
+    backgroundColor: C.card, borderWidth: 1, borderColor: 'rgba(99,102,241,0.25)',
   },
-  signInButton: {
-    borderRadius: 12,
-    marginBottom: 20,
-  },
-  signInButtonContent: {
-    paddingVertical: 6,
-  },
-  signInButtonLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#E2E8F0',
-  },
-  dividerText: {
-    color: '#94A3B8',
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  securityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  securityText: {
-    color: '#64748B',
-    fontSize: 12,
-  },
-  signUpRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 16,
-  },
-  signUpText: {
-    fontSize: 14,
-    color: '#64748B',
-  },
-  signUpLink: {
-    fontSize: 14,
-    color: '#4F46E5',
-    fontWeight: '700',
-  },
+  demoBtnAdmin: { borderColor: 'rgba(245,158,11,0.25)' },
+  demoBtnText: { fontSize: 13, fontWeight: '700', color: C.primary },
 });

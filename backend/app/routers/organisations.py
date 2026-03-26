@@ -22,6 +22,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -238,18 +239,19 @@ async def update_organisation(
 @router.delete(
     "/{org_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    response_model=None,
+    response_class=Response,
     summary="Delete an organisation (super_admin only)",
     dependencies=[Depends(require_roles(UserRole.super_admin))],
 )
 async def delete_organisation(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     org = await _get_org_or_404(org_id, db)
     await db.delete(org)
     await db.commit()
     logger.info("Organisation %s deleted.", org_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +368,7 @@ async def update_site(
 @router.delete(
     "/{org_id}/sites/{site_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    response_model=None,
+    response_class=Response,
     summary="Soft-delete a geofence site (admin)",
     dependencies=[Depends(require_roles(UserRole.org_admin, UserRole.super_admin))],
 )
@@ -375,7 +377,7 @@ async def delete_site(
     site_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     site = await _get_site_or_404(site_id, org_id, db)
     if current_user.role == UserRole.org_admin and current_user.org_id != org_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
@@ -384,3 +386,4 @@ async def delete_site(
     db.add(site)
     await db.commit()
     logger.info("Site %s soft-deleted by %s", site_id, current_user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

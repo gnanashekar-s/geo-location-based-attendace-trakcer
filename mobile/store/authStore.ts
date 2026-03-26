@@ -2,10 +2,11 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authApi } from '@/services/api';
+import { DEMO_ADMIN, DEMO_EMPLOYEE } from '@/services/demoData';
 
 // ─── Domain Types ────────────────────────────────────────────────────────────
 
-export type UserRole = 'employee' | 'admin' | 'org_admin' | 'super_admin';
+export type UserRole = 'employee' | 'admin' | 'supervisor' | 'org_admin' | 'super_admin';
 
 export interface User {
   id: string;
@@ -28,6 +29,7 @@ interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isInitialized: boolean;
+  isDemoMode: boolean;
 
   // Actions
   login: (email: string, password: string) => Promise<void>;
@@ -38,6 +40,8 @@ interface AuthState {
   loadFromStorage: () => Promise<void>;
   /** Optimistically update a subset of user fields (e.g. after profile edit). */
   patchUser: (partial: Partial<User>) => void;
+  /** Enter demo mode with mock data (employee or admin). */
+  enterDemoMode: (role: 'employee' | 'admin') => void;
 }
 
 // ─── Store Implementation ─────────────────────────────────────────────────────
@@ -51,6 +55,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       isAuthenticated: false,
       isInitialized: false,
+      isDemoMode: false,
 
       // ── Actions ────────────────────────────────────────────────────────────
 
@@ -92,11 +97,30 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: () => {
+        const { refreshToken, isDemoMode } = get();
+        // Fire-and-forget — server-side revocation (non-blocking)
+        if (refreshToken && !isDemoMode) {
+          authApi.logout(refreshToken).catch(() => { });
+        }
         set({
           token: null,
           refreshToken: null,
           user: null,
           isAuthenticated: false,
+          isDemoMode: false,
+        });
+      },
+
+      enterDemoMode: (role: 'employee' | 'admin') => {
+        const demoUser = role === 'admin' ? DEMO_ADMIN : DEMO_EMPLOYEE;
+        const user: User = { ...demoUser, avatar_url: demoUser.avatar_url ?? undefined };
+        set({
+          token: 'demo-token',
+          refreshToken: 'demo-refresh-token',
+          user: user,
+          isAuthenticated: true,
+          isInitialized: true,
+          isDemoMode: true,
         });
       },
 
@@ -108,7 +132,7 @@ export const useAuthStore = create<AuthState>()(
        * profile to ensure it is up-to-date.
        */
       initialize: async () => {
-        const { token } = get();
+        const { token, isDemoMode } = get();
         if (token) {
           set({ isAuthenticated: true });
         } else {
@@ -116,6 +140,9 @@ export const useAuthStore = create<AuthState>()(
         }
         // Mark initialized immediately so the UI never spins on load
         set({ isInitialized: true });
+
+        // In demo mode, skip refreshing user profile from backend
+        if (isDemoMode) return;
 
         // Refresh user profile in background (non-blocking)
         if (token) {
@@ -144,6 +171,7 @@ export const useAuthStore = create<AuthState>()(
         refreshToken: state.refreshToken,
         user: state.user,
         isAuthenticated: state.isAuthenticated,
+        isDemoMode: state.isDemoMode,
       }),
     },
   ),

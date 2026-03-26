@@ -37,6 +37,8 @@ celery_app = Celery(
         "app.workers.tasks.cleanup",
         "app.workers.tasks.buddy_punch_analysis",
         "app.workers.tasks.user_risk_profiler",
+        "app.workers.tasks.late_warning_dispatcher",
+        "app.workers.tasks.shift_pattern_detector",
     ],
 )
 
@@ -81,6 +83,8 @@ celery_app.conf.update(
         "app.workers.tasks.geofence_watch.check_geofence_breaches": {"queue": "geofence"},
         "app.workers.tasks.buddy_punch_analysis.run_buddy_punch_analysis": {"queue": "fraud"},
         "app.workers.tasks.user_risk_profiler.update_user_risk_profiles": {"queue": "fraud"},
+        "app.workers.tasks.late_warning_dispatcher.*": {"queue": "fraud"},
+        "app.workers.tasks.shift_pattern_detector.*": {"queue": "fraud"},
     },
 )
 
@@ -124,5 +128,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.user_risk_profiler.update_user_risk_profiles",
         "schedule": crontab(hour=3, minute=0),
         "options": {"queue": "fraud"},
+    },
+    # ── Proactive late check-in warning: every 5 minutes ──────────────────
+    "dispatch-late-warnings-every-5min": {
+        "task": "app.workers.tasks.late_warning_dispatcher.dispatch_late_warnings",
+        "schedule": 300.0,
+    },
+    # ── Auto shift pattern detection: daily at 04:00 UTC ──────────────────
+    "detect-shift-patterns-daily": {
+        "task": "app.workers.tasks.shift_pattern_detector.detect_shift_patterns",
+        "schedule": crontab(hour=4, minute=0),
     },
 }
