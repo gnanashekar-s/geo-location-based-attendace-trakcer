@@ -23,6 +23,7 @@ from app.models.approval import (  # noqa: F401
 )
 from app.models.audit_log import AuditLog, Notification  # noqa: F401
 from app.models.fraud_whitelist import FraudWhitelist  # noqa: F401
+from app.models.ip_rule import IPRule, IPRuleType  # noqa: F401
 
 __all__ = [
     # Organisation
@@ -50,4 +51,7 @@ __all__ = [
     "Notification",
     # Fraud
     "FraudWhitelist",
+    # IP Rules
+    "IPRule",
+    "IPRuleType",
 ]

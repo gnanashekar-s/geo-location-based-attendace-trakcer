@@ -8,7 +8,7 @@ import * as Demo from '@/services/demoData';
 const BASE_URL =
   Platform.OS === 'web'
     ? 'http://localhost:8000/api/v1'
-    : (process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.1.51:8000/api/v1');
+    : (process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.1.69:8000/api/v1');
 
 // ─── Axios instance ───────────────────────────────────────────────────────────
 
@@ -166,7 +166,11 @@ export const attendanceApi = {
       ...r,
       data: {
         fraud_score: r.data?.fraud_score ?? 0,
-        fraud_flags: r.data?.fraud_flags ? Object.keys(r.data.fraud_flags) : [],
+        fraud_flags: Array.isArray(r.data?.fraud_flags)
+          ? r.data.fraud_flags
+          : r.data?.fraud_flags
+            ? Object.keys(r.data.fraud_flags)
+            : [],
         requires_approval: r.data?.is_manual ?? false,
         attendance: mapEventToRecord(r.data),
         distance_meters: 0,
@@ -202,7 +206,34 @@ export const attendanceApi = {
     const skip = (page - 1) * perPage;
     return api.get<any[]>(`/attendance/history?skip=${skip}&limit=${perPage}`).then(r => {
       const raw: any[] = Array.isArray(r.data) ? r.data : [];
-      const items = raw.map(mapEventToRecord);
+
+      // Build a date→checkout_time map so we can compute duration for checkins
+      const checkoutByDate: Record<string, string> = {};
+      raw.forEach(rec => {
+        if (rec.event_type === 'checkout' && rec.created_at) {
+          const d = rec.created_at.split('T')[0];
+          // keep the latest checkout for that day
+          if (!checkoutByDate[d] || rec.created_at > checkoutByDate[d]) {
+            checkoutByDate[d] = rec.created_at;
+          }
+        }
+      });
+
+      const items = raw.map(rec => {
+        const mapped = mapEventToRecord(rec);
+        if (rec.event_type === 'checkin' && rec.created_at) {
+          const d = rec.created_at.split('T')[0];
+          const checkoutTime = checkoutByDate[d];
+          if (checkoutTime) {
+            mapped.check_out_time = checkoutTime;
+            mapped.duration_minutes = Math.round(
+              (new Date(checkoutTime).getTime() - new Date(rec.created_at).getTime()) / 60000
+            );
+          }
+        }
+        return mapped;
+      });
+
       return {
         ...r,
         data: {
@@ -218,11 +249,39 @@ export const attendanceApi = {
 
   stats: () => {
     if (isDemoMode()) return demoRes(Demo.DEMO_STATS);
-    return api.get<AttendanceStats>('/attendance/stats');
+    return api.get<any>('/attendance/stats').then(r => {
+      const d = r.data ?? {};
+      const totalCheckins = d.total_check_ins ?? d.present_days ?? 0;
+      const lateDays = d.late_count ?? d.late_days ?? 0;
+      const absentDays = d.absent_count ?? d.absent_days ?? 0;
+      const onTimeDays = totalCheckins - lateDays;
+      const totalWorkdays = totalCheckins + absentDays;
+      const rate = totalWorkdays > 0 ? Math.round((totalCheckins / totalWorkdays) * 100) : 0;
+      return {
+        ...r,
+        data: {
+          total_days:        totalWorkdays,
+          present_days:      totalCheckins,
+          absent_days:       absentDays,
+          late_days:         lateDays,
+          on_time_days:      Math.max(0, onTimeDays),
+          attendance_rate:   d.attendance_rate ?? rate,
+          avg_checkin_time:  d.avg_checkin_time ?? null,
+          current_streak:          d.current_streak ?? 0,
+          longest_streak:          d.longest_streak ?? 0,
+          punctuality_percentage:  d.punctuality_percentage ?? null,
+        } as AttendanceStats,
+      };
+    });
   },
   upcomingShift: () => {
     if (isDemoMode()) return demoRes(Demo.DEMO_UPCOMING_SHIFT);
-    return api.get<UpcomingShift | null>('/attendance/upcoming-shift');
+    return api.get<UpcomingShift | null>('/attendance/upcoming-shift').catch((err: any) => {
+      if (err?.response?.status === 404 || err?.response?.status === 204) {
+        return { data: null, status: 204 } as any;
+      }
+      return { data: null, status: 204 } as any;
+    });
   },
   markSafe: (recordId: string, note: string = '') => {
     if (isDemoMode()) return demoRes({});
@@ -291,7 +350,19 @@ export const usersApi = {
   },
   leaderboard: () => {
     if (isDemoMode()) return demoRes(Demo.DEMO_LEADERBOARD);
-    return api.get<LeaderboardEntry[]>('/users/leaderboard');
+    return api.get<any[]>('/users/leaderboard').then(r => {
+      const raw: any[] = Array.isArray(r.data) ? r.data : [];
+      return {
+        ...r,
+        data: raw.map((entry: any, idx: number) => ({
+          user_id:      entry.user_id ?? entry.id,
+          full_name:    entry.full_name,
+          streak_count: entry.streak_count ?? 0,
+          rank:         idx + 1,
+          avatar_url:   entry.avatar_url ?? undefined,
+        } as LeaderboardEntry)),
+      };
+    });
   },
 };
 
@@ -380,5 +451,46 @@ export const notificationsApi = {
   markAllRead: () => {
     if (isDemoMode()) return demoRes({});
     return api.post('/notifications/read-all');
+  },
+};
+
+export const whitelistApi = {
+  list: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_WHITELIST);
+    return api.get('/admin/whitelist');
+  },
+  add: (p: { user_id: string; device_fingerprint: string; reason: string }) => {
+    if (isDemoMode()) return demoRes({ id: `wl-${Date.now()}`, message: 'Whitelist entry added.' });
+    return api.post('/admin/whitelist', p);
+  },
+  remove: (id: string) => {
+    if (isDemoMode()) return demoRes({});
+    return api.delete(`/admin/whitelist/${id}`);
+  },
+};
+
+export const adminDevicesApi = {
+  list: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_DEVICES);
+    return api.get('/admin/devices');
+  },
+  trust: (id: string, is_trusted: boolean) => {
+    if (isDemoMode()) return demoRes({ id, is_trusted, message: 'Device trust updated.' });
+    return api.patch(`/admin/devices/${id}/trust`, { is_trusted });
+  },
+};
+
+export const ipRulesApi = {
+  list: () => {
+    if (isDemoMode()) return demoRes(Demo.DEMO_IP_RULES);
+    return api.get('/admin/ip-rules');
+  },
+  add: (p: { rule_type: 'block' | 'allow'; ip_cidr: string; reason: string }) => {
+    if (isDemoMode()) return demoRes({ id: `rule-${Date.now()}`, message: 'IP rule created.' });
+    return api.post('/admin/ip-rules', p);
+  },
+  remove: (id: string) => {
+    if (isDemoMode()) return demoRes({});
+    return api.delete(`/admin/ip-rules/${id}`);
   },
 };

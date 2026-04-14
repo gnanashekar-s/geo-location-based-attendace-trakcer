@@ -15,7 +15,6 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import Response
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,14 +64,13 @@ async def list_notifications(
 
 @router.post(
     "/read-all",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
+    status_code=status.HTTP_200_OK,
     summary="Mark all notifications as read",
 )
 async def mark_all_read(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
-) -> Response:
+) -> dict:
     await db.execute(
         update(Notification)
         .where(
@@ -82,7 +80,7 @@ async def mark_all_read(
         .values(is_read=True, read_at=datetime.now(timezone.utc))
     )
     await db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -92,15 +90,14 @@ async def mark_all_read(
 
 @router.post(
     "/{notification_id}/read",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
+    status_code=status.HTTP_200_OK,
     summary="Mark a single notification as read",
 )
 async def mark_one_read(
     notification_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
-) -> Response:
+) -> dict:
     result = await db.execute(
         select(Notification).where(
             Notification.id == notification_id,
@@ -115,4 +112,4 @@ async def mark_one_read(
     notif.read_at = datetime.now(timezone.utc)
     db.add(notif)
     await db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return {}

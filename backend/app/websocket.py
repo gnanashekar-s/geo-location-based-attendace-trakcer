@@ -265,7 +265,7 @@ async def ws_feed(
         return
 
     role = payload.get("role", "")
-    if role not in {"admin", "superadmin"}:
+    if role not in {"admin", "superadmin", "org_admin", "supervisor"}:
         await websocket.close(
             code=status.WS_1008_POLICY_VIOLATION,
         )
@@ -349,7 +349,7 @@ async def ws_approvals(
         return
 
     role = payload.get("role", "")
-    if role not in {"manager", "admin", "superadmin"}:
+    if role not in {"manager", "admin", "superadmin", "org_admin", "supervisor"}:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         logger.warning(
             "WebSocket /ws/approvals: access denied for role=%s user=%s",

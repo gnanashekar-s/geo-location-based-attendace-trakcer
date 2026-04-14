@@ -152,7 +152,7 @@ export default function EmployeeHomeScreen() {
   const firstName = user?.full_name?.split(' ')[0] ?? 'there';
   const avatarInit = initials(user?.full_name);
   const attendancePct = statsData ? `${Math.round(statsData.attendance_rate ?? statsData.punctuality_percentage ?? 0)}%` : '—';
-  const hoursToday = fmtDuration(todayData?.duration_minutes ?? null);
+  const hoursToday = fmtDuration(todayData?.record?.duration_minutes ?? null);
   const onTimePct = statsData ? `${Math.round(statsData.punctuality_percentage ?? 0)}%` : '—';
 
   const onCheckIn = async () => {

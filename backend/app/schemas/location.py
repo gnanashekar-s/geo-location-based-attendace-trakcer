@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class SiteCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    address: str = Field(..., min_length=1, max_length=500)
+    address: Optional[str] = Field(None, min_length=1, max_length=500)
     center_lat: float = Field(..., ge=-90.0, le=90.0)
     center_lng: float = Field(..., ge=-180.0, le=180.0)
     radius_meters: float = Field(..., gt=0.0, le=50_000.0)

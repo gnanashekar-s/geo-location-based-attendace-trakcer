@@ -75,6 +75,7 @@ services:
     environment:
       MINIO_ROOT_USER:     ${MINIO_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+      MINIO_SERVER_URL:    http://localhost:9000
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -101,6 +102,8 @@ services:
       sh -c "
         echo 'Running database migrations...' &&
         alembic upgrade head &&
+        echo 'Seeding demo data...' &&
+        python seed.py || true &&
         echo 'Starting API server...' &&
         uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level info
       "
@@ -120,6 +123,8 @@ services:
     environment:
       PYTHONPATH: /app
       PYTHONUNBUFFERED: "1"
+      DEBUG: "true"
+      CORS_ORIGINS: '["http://localhost:8081","http://localhost:3000","http://localhost:8080","*"]'
 
   # ── Celery worker ────────────────────────────────────────────────────────
   worker:

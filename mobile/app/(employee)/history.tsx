@@ -141,15 +141,16 @@ function RecordItem({ record }: { record: AttendanceRecord }) {
 export default function HistoryScreen() {
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(getMonth(now)); // 0-indexed
+  const [selectedYear, setSelectedYear] = useState(getYear(now));
   const [page, setPage] = useState(1);
   const [allRecords, setAllRecords] = useState<AttendanceRecord[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const { isLoading, refetch } = useQuery({
-    queryKey: ['attendance', 'history', page],
+    queryKey: ['attendance', 'history', 'full', page],
     queryFn: async () => {
-      const res = await attendanceApi.history(page, 20);
+      const res = await attendanceApi.history(page, 100);
       const data = res.data;
       const items = data?.items ?? (Array.isArray(data) ? data : []);
       if (page === 1) {
@@ -173,15 +174,17 @@ export default function HistoryScreen() {
     if (hasMore && !isLoading) setPage(p => p + 1);
   };
 
-  // Filter records to the selected month
+  // Filter records to the selected month and year
   const filteredRecords = useMemo(() => {
     return allRecords.filter(r => {
-      if (!r.created_at) return false;
+      const d = r.date || r.created_at;
+      if (!d) return false;
       try {
-        return getMonth(parseISO(r.created_at)) === selectedMonth;
+        const parsed = parseISO(d);
+        return getMonth(parsed) === selectedMonth && getYear(parsed) === selectedYear;
       } catch { return false; }
     });
-  }, [allRecords, selectedMonth]);
+  }, [allRecords, selectedMonth, selectedYear]);
 
   // Summary counts
   const presentCount = filteredRecords.filter(r => r.status === 'present' || r.status === 'approved').length;
@@ -205,6 +208,21 @@ export default function HistoryScreen() {
           )}
         </View>
       </LinearGradient>
+
+      {/* Year navigator */}
+      <View style={styles.yearRow}>
+        <Pressable onPress={() => setSelectedYear(y => y - 1)} style={styles.yearArrow}>
+          <MaterialCommunityIcons name="chevron-left" size={20} color={C.textSecondary} />
+        </Pressable>
+        <Text style={styles.yearLabel}>{selectedYear}</Text>
+        <Pressable
+          onPress={() => setSelectedYear(y => y + 1)}
+          style={[styles.yearArrow, selectedYear >= getYear(now) && { opacity: 0.3 }]}
+          disabled={selectedYear >= getYear(now)}
+        >
+          <MaterialCommunityIcons name="chevron-right" size={20} color={C.textSecondary} />
+        </Pressable>
+      </View>
 
       {/* Month selector */}
       <ScrollView
@@ -324,6 +342,17 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   totalHoursText: { fontSize: 12, fontWeight: '700', color: C.teal },
+
+  // Year navigator
+  yearRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 10,
+    gap: 12,
+  },
+  yearArrow: { padding: 4 },
+  yearLabel: { fontSize: 15, fontWeight: '700', color: C.textPrimary, minWidth: 48, textAlign: 'center' },
 
   // Month selector
   monthSelector: {

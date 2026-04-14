@@ -124,12 +124,25 @@ async def summary(
     pending_res = await db.execute(pending_q)
     pending_approvals = pending_res.scalar_one()
 
+    # Anomaly count (fraud_score >= 0.5 for today)
+    anomaly_q = select(func.count(AttendanceRecord.id)).where(
+        and_(
+            AttendanceRecord.fraud_score >= 0.5,
+            AttendanceRecord.created_at >= day_start,
+            AttendanceRecord.created_at < day_end,
+            *org_filter,
+        )
+    )
+    anomaly_res = await db.execute(anomaly_q)
+    anomaly_count = anomaly_res.scalar_one()
+
     return SummaryResponse(
         total_present=total_present,
         total_late=total_late,
         total_absent=total_absent,
         pending_approvals=pending_approvals,
         total_employees=total_employees,
+        anomaly_count=anomaly_count,
         date=target_date.isoformat() if target_date else None,
     )
 
@@ -204,6 +217,8 @@ async def attendance_today(
             "status": "present" if checkin else "absent",
             "is_late": bool(checkin and checkin.created_at.hour >= 9),
             "fraud_score": float(checkin.fraud_score) if checkin and checkin.fraud_score else 0.0,
+            "latitude": float(checkin.lat) if checkin and checkin.lat is not None else None,
+            "longitude": float(checkin.lng) if checkin and checkin.lng is not None else None,
         })
 
     # Sort: present first, then absent
@@ -410,7 +425,7 @@ async def export(
     The export is processed asynchronously. The caller will receive a
     notification (via the notification service) when the file is ready.
     """
-    from app.workers.tasks.reports import generate_attendance_csv  # type: ignore[attr-defined]
+    from app.workers.tasks.reports import generate_csv_report as generate_attendance_csv  # noqa: PLC0415
 
     if start_date is None:
         start_date = date.today() - timedelta(days=30)
@@ -419,11 +434,13 @@ async def export(
 
     # Enqueue Celery task
     try:
-        task = generate_attendance_csv.delay(
-            org_id=str(current_user.org_id),
-            start_date=start_date.isoformat(),
-            end_date=end_date.isoformat(),
-            requested_by=str(current_user.id),
+        task = generate_attendance_csv.apply_async(
+            kwargs={
+                "org_id": str(current_user.org_id),
+                "date_from": start_date.isoformat(),
+                "date_to": end_date.isoformat(),
+            },
+            queue="reports",
         )
         task_id = task.id
     except Exception as exc:  # noqa: BLE001
@@ -1249,3 +1266,86 @@ async def get_department_leaderboard(
         entry.rank = i + 1
 
     return entries[:10]  # top 10 departments
+
+
+# ---------------------------------------------------------------------------
+# GET /analytics/employee/{user_id}  – per-employee attendance stats (admin)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/employee/{user_id}",
+    summary="Attendance statistics for a specific employee",
+)
+async def employee_stats(
+    user_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return attendance statistics for any employee in the org (admin view)."""
+    from fastapi import HTTPException  # noqa: PLC0415
+    from app.models.attendance import AttendanceRecord as AttendanceLog, EventType  # type: ignore[attr-defined]
+
+    target_q = await db.execute(select(User).where(User.id == user_id))
+    target = target_q.scalars().first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if current_user.role != UserRole.super_admin and target.org_id != current_user.org_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    today = date.today()
+    month_start = datetime(today.year, today.month, 1, tzinfo=timezone.utc)
+    month_end = (
+        datetime(today.year, today.month + 1, 1, tzinfo=timezone.utc)
+        if today.month < 12
+        else datetime(today.year + 1, 1, 1, tzinfo=timezone.utc)
+    )
+
+    total_q = await db.execute(
+        select(func.count(AttendanceLog.id)).where(
+            and_(
+                AttendanceLog.user_id == user_id,
+                AttendanceLog.event_type == EventType.checkin,
+                AttendanceLog.is_valid.is_(True),
+            )
+        )
+    )
+    total_check_ins = total_q.scalar_one() or 0
+
+    month_q = await db.execute(
+        select(func.count(AttendanceLog.id)).where(
+            and_(
+                AttendanceLog.user_id == user_id,
+                AttendanceLog.event_type == EventType.checkin,
+                AttendanceLog.created_at >= month_start,
+                AttendanceLog.created_at < month_end,
+            )
+        )
+    )
+    month_checkins = month_q.scalar_one() or 0
+
+    late_q = await db.execute(
+        select(func.count(AttendanceLog.id)).where(
+            and_(
+                AttendanceLog.user_id == user_id,
+                AttendanceLog.event_type == EventType.checkin,
+                AttendanceLog.created_at >= month_start,
+                AttendanceLog.created_at < month_end,
+                func.extract("hour", AttendanceLog.created_at) >= 9,
+            )
+        )
+    )
+    late_count = late_q.scalar_one() or 0
+
+    working_days = (today - today.replace(day=1)).days + 1
+    on_time = month_checkins - late_count
+    punctuality = round((on_time / max(month_checkins, 1)) * 100, 1)
+
+    return {
+        "total_check_ins": total_check_ins,
+        "current_streak": getattr(target, "streak_count", 0) or 0,
+        "longest_streak": getattr(target, "streak_count", 0) or 0,
+        "punctuality_percentage": punctuality,
+        "late_count": late_count,
+        "absent_count": max(0, working_days - month_checkins),
+    }

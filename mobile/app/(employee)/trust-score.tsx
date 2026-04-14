@@ -17,6 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import { apiGet } from '@/api/client';
 import type { UserRiskProfileResponse } from '@/api/analytics';
+import { useAuthStore } from '@/store/authStore';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -322,11 +323,25 @@ function InfoSection() {
 
 export default function TrustScoreScreen() {
   const insets = useSafeAreaInsets();
+  const isDemoMode = useAuthStore(s => s.isDemoMode);
 
   const { data, isLoading, isError, refetch } = useQuery<UserRiskProfileResponse>({
     queryKey: ['analytics', 'my-risk-profile'],
-    queryFn: () => apiGet<UserRiskProfileResponse>('/api/v1/analytics/my-risk-profile'),
+    queryFn: () => {
+      if (isDemoMode) {
+        return Promise.resolve({
+          user_id: 'demo',
+          full_name: 'Demo User',
+          risk_level: 'low',
+          thirty_day_history: [],
+          flag_frequency: [],
+          behavioral_baseline: { mean_checkin_hour: 8.5, std_hours: 0.5, sample_size: 20 },
+        } as UserRiskProfileResponse);
+      }
+      return apiGet<UserRiskProfileResponse>('/api/v1/analytics/my-risk-profile');
+    },
     staleTime: 5 * 60_000,
+    retry: false,
   });
 
   const handleRequestReview = () => {

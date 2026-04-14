@@ -89,6 +89,7 @@ async def checkout(
     payload: CheckoutRequest,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
 ) -> AttendanceRecord:
     """
     Record a GPS-verified check-out.
@@ -96,7 +97,7 @@ async def checkout(
     Requires an open check-in for the current day. Returns 400 if no
     check-in is found or if the user has already checked out.
     """
-    return await create_checkout(payload, current_user, db)
+    return await create_checkout(payload, current_user, db, redis)
 
 
 # ---------------------------------------------------------------------------

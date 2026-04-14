@@ -166,12 +166,20 @@ export interface AnalyticsSummary {
 }
 
 export interface AttendanceStats {
-  total_check_ins: number;
+  total_days: number;
+  present_days: number;
+  absent_days: number;
+  late_days: number;
+  on_time_days: number;
+  attendance_rate: number;
+  avg_checkin_time?: string | null;
   current_streak: number;
   longest_streak: number;
-  punctuality_percentage: number;
-  late_count: number;
-  absent_count: number;
+  punctuality_percentage?: number | null;
+  // legacy field aliases
+  total_check_ins?: number;
+  late_count?: number;
+  absent_count?: number;
 }
 
 // ─── Pagination ───────────────────────────────────────────────────────────────
@@ -219,9 +227,12 @@ export interface TrendPoint {
 
 export interface LeaderboardEntry {
   id: string;
+  user_id: string;
   full_name: string;
   streak_count: number;
   punctuality_percentage: number;
+  rank: number;
+  avatar_url?: string;
 }
 
 // ─── Shift Types ──────────────────────────────────────────────────────────────

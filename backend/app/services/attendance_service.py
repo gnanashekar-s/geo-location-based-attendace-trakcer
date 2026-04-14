@@ -151,15 +151,25 @@ async def create_checkin(
     # --- Publish to WebSocket feed ---
     import json as _json
     try:
+        fraud_flags_list = list(fraud.flags) if fraud.flags else []
         await redis.publish(
             "ws:feed",
             _json.dumps(
                 {
+                    "id": str(log.id),
                     "event": "check_in",
+                    "event_type": "checkin",
                     "user_id": str(user.id),
-                    "site_id": str(matched_site.id),
+                    "user_name": user.full_name,
+                    "user_email": user.email,
+                    "avatar_url": user.avatar_url,
+                    "site_id": str(matched_site.id) if matched_site else None,
+                    "site_name": matched_site.name if matched_site else "Unknown Site",
+                    "latitude": float(request.lat) if request.lat is not None else None,
+                    "longitude": float(request.lng) if request.lng is not None else None,
                     "timestamp": log.created_at.isoformat(),
                     "fraud_score": fraud.score,
+                    "fraud_flags": fraud_flags_list,
                 },
                 default=str,
             ),
@@ -179,6 +189,7 @@ async def create_checkout(
     request: CheckoutRequest,
     user,
     db: AsyncSession,
+    redis=None,
 ) -> AttendanceRecord:
     """
     Record a checkout event.
@@ -233,6 +244,36 @@ async def create_checkout(
     db.add(log)
     await db.commit()
     await db.refresh(log)
+
+    # --- Publish checkout to WebSocket feed ---
+    if redis is not None:
+        import json as _json
+        try:
+            await redis.publish(
+                "ws:feed",
+                _json.dumps(
+                    {
+                        "id": str(log.id),
+                        "event": "checkout",
+                        "event_type": "checkout",
+                        "user_id": str(user.id),
+                        "user_name": user.full_name,
+                        "user_email": user.email,
+                        "avatar_url": user.avatar_url,
+                        "site_id": str(log.site_id) if log.site_id else None,
+                        "site_name": "Office",
+                        "latitude": float(request.lat) if request.lat is not None else None,
+                        "longitude": float(request.lng) if request.lng is not None else None,
+                        "timestamp": log.created_at.isoformat(),
+                        "fraud_score": 0.0,
+                        "fraud_flags": [],
+                    },
+                    default=str,
+                ),
+            )
+        except Exception as _pub_exc:  # noqa: BLE001
+            logger.warning("Failed to publish checkout to ws:feed: %s", _pub_exc)
+
     return AttendanceRecord.model_validate(log)
 
 

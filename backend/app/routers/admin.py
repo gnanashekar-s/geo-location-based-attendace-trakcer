@@ -31,6 +31,8 @@ from app.dependencies import get_current_active_user, get_db, require_roles
 from app.models.attendance import Shift, UserShift
 from app.models.audit_log import AuditLog
 from app.models.device import Device
+from app.models.fraud_whitelist import FraudWhitelist
+from app.models.ip_rule import IPRule, IPRuleType
 from app.models.user import User, UserRole
 
 logger = logging.getLogger(__name__)
@@ -392,3 +394,305 @@ async def assign_shift(
     await db.commit()
     await db.refresh(assignment)
     return {"id": str(assignment.id), "message": "Shift assigned."}
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/whitelist
+# ---------------------------------------------------------------------------
+
+
+@router.get("/whitelist", summary="List fraud whitelist entries for org")
+async def list_whitelist(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> List[Dict[str, Any]]:
+    org_filter = (
+        []
+        if current_user.role == UserRole.super_admin
+        else [FraudWhitelist.user_id.in_(
+            select(User.id).where(User.org_id == current_user.org_id)
+        )]
+    )
+    result = await db.execute(
+        select(
+            FraudWhitelist,
+            User.full_name.label("user_name"),
+            User.email.label("user_email"),
+        )
+        .join(User, User.id == FraudWhitelist.user_id)
+        .where(and_(*org_filter))
+        .order_by(desc(FraudWhitelist.created_at))
+    )
+    rows = result.all()
+    return [
+        {
+            "id": str(w.id),
+            "user_id": str(w.user_id),
+            "user_name": user_name,
+            "user_email": user_email,
+            "device_fingerprint": w.device_fingerprint,
+            "reason": w.reason,
+            "admin_id": str(w.admin_id) if w.admin_id else None,
+            "created_at": str(w.created_at),
+        }
+        for w, user_name, user_email in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/whitelist
+# ---------------------------------------------------------------------------
+
+
+@router.post("/whitelist", status_code=status.HTTP_201_CREATED,
+             summary="Add a device+user pair to the fraud whitelist")
+async def add_whitelist_entry(
+    payload: Dict[str, Any],
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    user_id = payload.get("user_id")
+    device_fingerprint = payload.get("device_fingerprint", "").strip()
+    reason = payload.get("reason", "")
+
+    if not user_id or not device_fingerprint:
+        raise HTTPException(status_code=422, detail="user_id and device_fingerprint are required.")
+
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    target_user = user_result.scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if current_user.role != UserRole.super_admin and target_user.org_id != current_user.org_id:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    entry = FraudWhitelist(
+        user_id=user_id,
+        admin_id=current_user.id,
+        device_fingerprint=device_fingerprint,
+        reason=reason,
+    )
+    db.add(entry)
+    log = AuditLog(
+        actor_id=current_user.id,
+        action="add_whitelist",
+        entity_type="fraud_whitelist",
+        entity_id=str(user_id),
+        old_value=None,
+        new_value={"device_fingerprint": device_fingerprint, "reason": reason},
+        ip_address=None,
+    )
+    db.add(log)
+    try:
+        await db.commit()
+        await db.refresh(entry)
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="This device is already whitelisted for that user.")
+
+    return {"id": str(entry.id), "message": "Whitelist entry added."}
+
+
+# ---------------------------------------------------------------------------
+# DELETE /admin/whitelist/{entry_id}
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/whitelist/{entry_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Remove a whitelist entry",
+)
+async def remove_whitelist_entry(
+    entry_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    result = await db.execute(select(FraudWhitelist).where(FraudWhitelist.id == entry_id))
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Whitelist entry not found.")
+
+    user_result = await db.execute(select(User).where(User.id == entry.user_id))
+    owner = user_result.scalar_one_or_none()
+    if owner and current_user.role != UserRole.super_admin and owner.org_id != current_user.org_id:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    log = AuditLog(
+        actor_id=current_user.id,
+        action="remove_whitelist",
+        entity_type="fraud_whitelist",
+        entity_id=str(entry_id),
+        old_value={"device_fingerprint": entry.device_fingerprint},
+        new_value=None,
+        ip_address=None,
+    )
+    db.add(log)
+    await db.delete(entry)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# PATCH /admin/devices/{device_id}/trust
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/devices/{device_id}/trust", summary="Toggle device trusted state")
+async def toggle_device_trust(
+    device_id: UUID,
+    payload: Dict[str, Any],
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    result = await db.execute(select(Device).where(Device.id == device_id))
+    device = result.scalar_one_or_none()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found.")
+
+    user_result = await db.execute(select(User).where(User.id == device.user_id))
+    owner = user_result.scalar_one_or_none()
+    if owner and current_user.role != UserRole.super_admin and owner.org_id != current_user.org_id:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    old_trusted = device.is_trusted
+    new_trusted = bool(payload.get("is_trusted", not old_trusted))
+    device.is_trusted = new_trusted
+
+    log = AuditLog(
+        actor_id=current_user.id,
+        action="toggle_device_trust",
+        entity_type="device",
+        entity_id=str(device_id),
+        old_value={"is_trusted": old_trusted},
+        new_value={"is_trusted": new_trusted},
+        ip_address=None,
+    )
+    db.add(log)
+    await db.commit()
+    return {"id": str(device_id), "is_trusted": new_trusted, "message": "Device trust updated."}
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/ip-rules
+# ---------------------------------------------------------------------------
+
+
+@router.get("/ip-rules", summary="List IP block/allow rules for org")
+async def list_ip_rules(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> List[Dict[str, Any]]:
+    filters = (
+        []
+        if current_user.role == UserRole.super_admin
+        else [IPRule.org_id == current_user.org_id]
+    )
+    result = await db.execute(
+        select(IPRule).where(and_(*filters)).order_by(desc(IPRule.created_at))
+    )
+    rules = result.scalars().all()
+    return [
+        {
+            "id": str(r.id),
+            "org_id": str(r.org_id),
+            "rule_type": r.rule_type.value if hasattr(r.rule_type, "value") else str(r.rule_type),
+            "ip_cidr": r.ip_cidr,
+            "reason": r.reason,
+            "created_by_id": str(r.created_by_id) if r.created_by_id else None,
+            "created_at": str(r.created_at),
+        }
+        for r in rules
+    ]
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/ip-rules
+# ---------------------------------------------------------------------------
+
+
+@router.post("/ip-rules", status_code=status.HTTP_201_CREATED,
+             summary="Create an IP block or allow rule")
+async def create_ip_rule(
+    payload: Dict[str, Any],
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    import ipaddress as _ipaddress  # noqa: PLC0415
+
+    rule_type_raw = payload.get("rule_type", "block")
+    ip_cidr = payload.get("ip_cidr", "").strip()
+    reason = payload.get("reason", "")
+
+    if not ip_cidr:
+        raise HTTPException(status_code=422, detail="ip_cidr is required.")
+
+    try:
+        _ipaddress.ip_network(ip_cidr, strict=False)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"'{ip_cidr}' is not a valid IP address or CIDR range.")
+
+    try:
+        rule_type = IPRuleType(rule_type_raw)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="rule_type must be 'block' or 'allow'.")
+
+    rule = IPRule(
+        org_id=current_user.org_id,
+        created_by_id=current_user.id,
+        rule_type=rule_type,
+        ip_cidr=ip_cidr,
+        reason=reason,
+    )
+    db.add(rule)
+    log = AuditLog(
+        actor_id=current_user.id,
+        action="create_ip_rule",
+        entity_type="ip_rule",
+        entity_id=ip_cidr,
+        old_value=None,
+        new_value={"rule_type": rule_type.value, "ip_cidr": ip_cidr, "reason": reason},
+        ip_address=None,
+    )
+    db.add(log)
+    await db.commit()
+    await db.refresh(rule)
+    return {"id": str(rule.id), "message": "IP rule created."}
+
+
+# ---------------------------------------------------------------------------
+# DELETE /admin/ip-rules/{rule_id}
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/ip-rules/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Delete an IP rule",
+)
+async def delete_ip_rule(
+    rule_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    result = await db.execute(select(IPRule).where(IPRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="IP rule not found.")
+    if current_user.role != UserRole.super_admin and rule.org_id != current_user.org_id:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    log = AuditLog(
+        actor_id=current_user.id,
+        action="delete_ip_rule",
+        entity_type="ip_rule",
+        entity_id=str(rule_id),
+        old_value={"rule_type": rule.rule_type.value, "ip_cidr": rule.ip_cidr},
+        new_value=None,
+        ip_address=None,
+    )
+    db.add(log)
+    await db.delete(rule)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

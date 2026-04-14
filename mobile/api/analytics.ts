@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPatch } from './client';
 import { useAuthStore } from '@/store/authStore';
-import { DEMO_DEPT_LEADERBOARD } from '@/services/demoData';
+import { DEMO_DEPT_LEADERBOARD, DEMO_FRAUD_SUMMARY, DEMO_BUDDY_PUNCH_INCIDENTS } from '@/services/demoData';
 
 // ─── Query Keys ───────────────────────────────────────────────────────────────
 
@@ -319,11 +319,12 @@ export const setInvestigationStatus = (
 // ─── React Query Hooks ───────────────────────────────────────────────────────
 
 export function useFraudSummary() {
+  const demoMode = useAuthStore(s => s.isDemoMode);
   return useQuery<FraudSummaryResponse, Error>({
     queryKey: fraudSummaryKey(),
-    queryFn: getFraudSummary,
+    queryFn: demoMode ? () => Promise.resolve(DEMO_FRAUD_SUMMARY) : getFraudSummary,
     staleTime: 60_000,
-    refetchInterval: 2 * 60_000,
+    refetchInterval: demoMode ? false : 2 * 60_000,
   });
 }
 
@@ -337,10 +338,12 @@ export function useUserRiskProfile(userId: string) {
 }
 
 export function useBuddyPunchIncidents() {
+  const demoMode = useAuthStore(s => s.isDemoMode);
   return useQuery<BuddyPunchIncident[], Error>({
     queryKey: buddyPunchKey(),
-    queryFn: getBuddyPunchIncidents,
+    queryFn: demoMode ? () => Promise.resolve(DEMO_BUDDY_PUNCH_INCIDENTS) : getBuddyPunchIncidents,
     staleTime: 5 * 60_000,
+    refetchInterval: demoMode ? false : 5 * 60_000,
   });
 }
 

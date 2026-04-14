@@ -165,9 +165,14 @@ export const LiveFeed: React.FC<LiveFeedProps> = ({
     ];
   }, [isDemoMode]);
 
+  // The backend sends events as raw JSON objects directly over WS.
+  // The useWebSocket hook parses them and stores them — we use the messages
+  // array directly (cast to LiveCheckInEvent[]) since there's no wrapper.
   const events = isDemoMode
     ? demoEvents.slice(0, maxItems)
-    : (messages.map((m) => m.data).slice(0, maxItems) as LiveCheckInEvent[]);
+    : (messages as unknown as LiveCheckInEvent[])
+        .filter((e) => e && typeof e.id === 'string' && e.event_type)
+        .slice(0, maxItems);
 
   // Notify parent + auto-scroll on new events
   useEffect(() => {

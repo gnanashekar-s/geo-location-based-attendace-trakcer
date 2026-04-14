@@ -19,10 +19,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import { analyticsApi, attendanceApi, usersApi } from '@/services/api';
-import type { AnomalyRecord } from '@/types';
 import {
   useFraudSummary,
   useBuddyPunchIncidents,
+  type AnomalyRecord,
   type BuddyPunchIncident,
   type FraudSummaryResponse,
 } from '@/api/analytics';

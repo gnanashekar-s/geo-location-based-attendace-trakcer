@@ -252,21 +252,25 @@ function Leaderboard({ data, isLoading }: { data?: LeaderboardEntry[]; isLoading
       ) : !data?.length ? (
         <Text style={s.emptyText}>No leaderboard data yet.</Text>
       ) : (
-        data.map((entry, i) => (
-          <React.Fragment key={entry.id}>
-            {i > 0 && <View style={s.leaderSep} />}
-            <View style={s.leaderRow}>
-              <Text style={s.medal}>{MEDALS[i] ?? String(i + 1)}</Text>
-              <View style={s.leaderInfo}>
-                <Text style={s.leaderName}>{entry.full_name}</Text>
-                <Text style={s.leaderStreak}>🔥 {entry.streak_count} days</Text>
+        data.map((entry, i) => {
+          const maxStreak = data[0]?.streak_count ?? 1;
+          const pct = maxStreak > 0 ? Math.round(((entry.streak_count ?? 0) / maxStreak) * 100) : 0;
+          return (
+            <React.Fragment key={entry.user_id ?? entry.id ?? i}>
+              {i > 0 && <View style={s.leaderSep} />}
+              <View style={s.leaderRow}>
+                <Text style={s.medal}>{MEDALS[i] ?? String(i + 1)}</Text>
+                <View style={s.leaderInfo}>
+                  <Text style={s.leaderName}>{entry.full_name}</Text>
+                  <Text style={s.leaderStreak}>🔥 {entry.streak_count} days</Text>
+                </View>
+                <View style={s.pctPill}>
+                  <Text style={s.leaderPct}>{pct}%</Text>
+                </View>
               </View>
-              <View style={s.pctPill}>
-                <Text style={s.leaderPct}>{Math.round(entry.punctuality_percentage)}%</Text>
-              </View>
-            </View>
-          </React.Fragment>
-        ))
+            </React.Fragment>
+          );
+        })
       )}
     </View>
   );
@@ -287,12 +291,33 @@ export default function StreaksScreen() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: historyItems } = useQuery({
+    queryKey: ['attendance', 'history', 'all'],
+    queryFn: () => attendanceApi.history(1, 100).then(r => r.data.items),
+    staleTime: 5 * 60_000,
+  });
+
   const streakCount = stats?.current_streak  ?? 0;
   const bestStreak  = stats?.longest_streak  ?? 0;
   const punctuality = stats?.punctuality_percentage ?? null;
 
-  // Build placeholder present/absent sets from stats (real data would come from calendar API)
-  const presentDays = new Set<number>();
+  // Build present-day set for the current month from real history data
+  const presentDays = React.useMemo(() => {
+    const set = new Set<number>();
+    if (!historyItems) return set;
+    const now = new Date();
+    const year  = now.getFullYear();
+    const month = now.getMonth(); // 0-based
+    for (const record of historyItems) {
+      if (!record.date) continue;
+      const d = new Date(record.date);
+      if (d.getFullYear() === year && d.getMonth() === month) {
+        set.add(d.getDate());
+      }
+    }
+    return set;
+  }, [historyItems]);
+
   const absentDays  = new Set<number>();
 
   const motivation = getMotivation(streakCount);

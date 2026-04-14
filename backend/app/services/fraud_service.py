@@ -437,6 +437,7 @@ async def evaluate_checkin(
     """
     score = 0.0
     flags: List[str] = []
+    _allowed_by_rule = False
 
     # 0. Whitelist bypass
     try:
@@ -453,6 +454,27 @@ async def evaluate_checkin(
     except Exception:  # noqa: BLE001
         pass
 
+    # 0b. Admin IP rules (block/allow)
+    if request.ip_address and not _is_private_ip(request.ip_address):
+        try:
+            from app.models.ip_rule import IPRule, IPRuleType  # noqa: PLC0415
+
+            ip_rules_result = await db.execute(
+                select(IPRule).where(IPRule.org_id == org.id)
+            )
+            req_addr = ipaddress.ip_address(request.ip_address)
+            for rule in ip_rules_result.scalars().all():
+                try:
+                    if req_addr in ipaddress.ip_network(rule.ip_cidr, strict=False):
+                        if rule.rule_type == IPRuleType.block:
+                            return FraudResult(score=1.0, flags=["IP_BLOCKED"], block=True)
+                        _allowed_by_rule = True
+                        break
+                except ValueError:
+                    continue
+        except Exception:  # noqa: BLE001
+            pass
+
     # 1. Mock location
     if request.is_mock_location:
         score += 0.40
@@ -465,7 +487,7 @@ async def evaluate_checkin(
 
     # 3. IP reputation + 3b. IP-GPS country mismatch
     ip_country = ""
-    if request.ip_address:
+    if request.ip_address and not _allowed_by_rule:
         from app.config import settings  # noqa: PLC0415
 
         ip_result = await check_ip_reputation(

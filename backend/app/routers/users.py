@@ -103,9 +103,12 @@ async def leaderboard(
         items.append(
             {
                 "id": str(u.id),
+                "user_id": str(u.id),
                 "full_name": u.full_name,
                 "streak_count": u.streak_count or 0,
                 "punctuality_percentage": punctuality,
+                "rank": len(items) + 1,
+                "avatar_url": u.avatar_url,
             }
         )
     return items

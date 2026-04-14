@@ -30,11 +30,11 @@ const MAX_RETRY_DELAY_MS = 30_000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 // Mirror the same URL logic used in services/api.ts so WS works on phone too
-const TUNNEL_URL = 'https://legal-impalas-double.loca.lt';
+const TUNNEL_URL = '';
 const HTTP_BASE =
   Platform.OS === 'web'
     ? 'http://localhost:8000'
-    : TUNNEL_URL || 'http://192.168.1.51:8000';
+    : TUNNEL_URL || 'http://192.168.1.69:8000';
 
 function getWsUrl(endpoint: WebSocketEndpoint, token: string): string {
   const wsBase = HTTP_BASE.replace(/^http/, 'ws');
