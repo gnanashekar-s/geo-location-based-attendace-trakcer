@@ -72,7 +72,7 @@ $ExpoScript = Join-Path $env:TEMP ("expo_" + [System.Diagnostics.Process]::GetCu
 $s1 = 'Set-Location "' + $MobileDir + '"'
 $s2 = 'Write-Host "  API -> ' + $ApiUrl + '" -ForegroundColor Green'
 $s3 = 'Write-Host "  W=web  A=Android  Scan QR=phone" -ForegroundColor Cyan'
-$s4 = 'npx expo start'
+$s4 = 'npx expo start --tunnel'
 
 ($s1, $s2, $s3, $s4) -join "`n" | Set-Content -Path $ExpoScript
 
